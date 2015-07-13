@@ -1,0 +1,13 @@
+debian/man/lttng-track-process.1
+debian/man/lttng-analyses-record.1
+debian/man/lttng-cputop.1
+debian/man/lttng-iolatencyfreq.1
+debian/man/lttng-iolatencystats.1
+debian/man/lttng-iolatencytop.1
+debian/man/lttng-iolog.1
+debian/man/lttng-iousagetop.1
+debian/man/lttng-irqfreq.1
+debian/man/lttng-irqlog.1
+debian/man/lttng-irqstats.1
+debian/man/lttng-memtop.1
+debian/man/lttng-syscallstats.1

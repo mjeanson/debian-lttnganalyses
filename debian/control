@@ -1,0 +1,22 @@
+Source: lttnganalyses
+Maintainer: Michael Jeanson <mjeanson@efficios.com>
+Section: python
+Priority: optional
+Build-Depends: python3-setuptools, python3-all (>= 3.4), debhelper (>= 9),
+ python3-babeltrace (>= 1.2)
+Standards-Version: 3.9.6
+X-Python3-Version: >= 3.4
+
+Package: python3-lttnganalyses
+Architecture: all
+Depends: ${misc:Depends}, ${python3:Depends}, python3-babeltrace (>= 1.2)
+Description: LTTng analyses (Python 3)
+ This repository contains various scripts to extract monitoring data and
+ metrics from LTTng kernel traces.
+ .
+ As opposed to other diagnostic or monitoring solutions, this approach is
+ designed to allow users to record their system's activity with a low
+ overhead, wait for a problem to occur and then diagnose its cause offline.
+ .
+ This solution allows the user to target hard to find problems and dig until
+ the root cause is found.
