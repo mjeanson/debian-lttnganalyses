@@ -10,13 +10,14 @@ X-Python3-Version: >= 3.4
 Package: python3-lttnganalyses
 Architecture: all
 Depends: ${misc:Depends}, ${python3:Depends}, python3-babeltrace (>= 1.2)
-Description: LTTng analyses (Python 3)
- This repository contains various scripts to extract monitoring data and
- metrics from LTTng kernel traces.
+Description: LTTng 2.0 trace analysis tools (Python 3)
+ The LTTng project aims at providing highly efficient tracing tools for Linux.
+ Its tracers help tracking down performance issues and debugging problems
+ involving multiple concurrent processes and threads. Tracing across multiple
+ systems is also possible.
  .
- As opposed to other diagnostic or monitoring solutions, this approach is
- designed to allow users to record their system's activity with a low
- overhead, wait for a problem to occur and then diagnose its cause offline.
- .
- This solution allows the user to target hard to find problems and dig until
- the root cause is found.
+ This package contains various tools to analyse LTTng kernel traces and extract
+ monitoring data and metrics. As opposed to other diagnostic or monitoring
+ solutions, this approach is designed to allow users to record their system's
+ activity with a low overhead, wait for a problem to occur and then diagnose
+ its cause offline.
