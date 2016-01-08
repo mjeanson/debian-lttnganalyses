@@ -1,5 +1,5 @@
 Source: lttnganalyses
-Maintainer: Michael Jeanson <mjeanson@efficios.com>
+Maintainer: Michael Jeanson <mjeanson@ubuntu.com>
 Section: python
 Priority: optional
 Build-Depends: python3-setuptools, python3-all (>= 3.4), debhelper (>= 9),
