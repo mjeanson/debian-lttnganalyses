@@ -1,3 +1,11 @@
+lttnganalyses (0.3.0-2) unstable; urgency=medium
+
+  * Rebuild against python 3.5. Closes: #798244
+  * [1f7d568] Update maintainer email
+  * [5ff418e] Add VCS fields to control
+
+ -- Michael Jeanson <mjeanson@ubuntu.com>  Wed, 13 Jan 2016 15:04:25 -0500
+
 lttnganalyses (0.3.0-1) unstable; urgency=low
 
   [ Michael Jeanson ]
