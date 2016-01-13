@@ -1,5 +1,6 @@
 Source: lttnganalyses
 Maintainer: Michael Jeanson <mjeanson@ubuntu.com>
+Uploaders: Jon Bernard <jbernard@debian.org>
 Section: python
 Priority: optional
 Build-Depends: python3-setuptools, python3-all (>= 3.4), debhelper (>= 9),
