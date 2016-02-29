@@ -49,3 +49,15 @@ lttnganalyses/linuxautomaton/sp.py
 lttnganalyses/linuxautomaton/statedump.py
 lttnganalyses/linuxautomaton/sv.py
 lttnganalyses/linuxautomaton/syscalls.py
+tests/__init__.py
+tests/analysis_test.py
+tests/gen_ctfwriter.py
+tests/test_cputop.py
+tests/test_io.py
+tests/test_irq.py
+tests/trace_writer.py
+tests/expected/cputop.txt
+tests/expected/iolatencytop.txt
+tests/expected/iousagetop.txt
+tests/expected/irqlog.txt
+tests/expected/irqstats.txt
