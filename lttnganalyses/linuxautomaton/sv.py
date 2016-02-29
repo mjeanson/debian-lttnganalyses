@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-#
 # The MIT License (MIT)
 #
 # Copyright (C) 2015 - Julien Desfossez <jdesfossez@efficios.com>
@@ -32,15 +30,18 @@ class StateVariable:
 
 
 class Process():
-    def __init__(self, tid=None, pid=None, comm=''):
+    def __init__(self, tid=None, pid=None, comm='', prio=None):
         self.tid = tid
         self.pid = pid
         self.comm = comm
+        self.prio = prio
         # indexed by fd
         self.fds = {}
         self.current_syscall = None
         # the process scheduled before this one
         self.prev_tid = None
+        self.last_wakeup = None
+        self.last_waker = None
 
 
 class CPU():
@@ -71,7 +72,13 @@ class SyscallEvent():
 
     def process_exit(self, event):
         self.end_ts = event.timestamp
-        self.ret = event['ret']
+        # On certain architectures (notably arm32), lttng-modules
+        # versions prior to 2.8 would erroneously trace certain
+        # syscalls (e.g. mmap2) without their return value. In this
+        # case, get() will simply set self.ret to None. These syscalls
+        # with a None return value should simply be ignored down the
+        # line.
+        self.ret = event.get('ret')
         self.duration = self.end_ts - self.begin_ts
 
     @classmethod
@@ -133,6 +140,13 @@ class IRQ():
         self.cpu_id = cpu_id
         self.begin_ts = begin_ts
         self.end_ts = None
+
+    @property
+    def duration(self):
+        if not self.end_ts or not self.begin_ts:
+            return None
+
+        return self.end_ts - self.begin_ts
 
 
 class HardIRQ(IRQ):
@@ -446,7 +460,7 @@ class SyscallConsts():
     DISK_OPEN_SYSCALLS = ['open', 'openat']
     # list of syscalls that open a FD on the network
     # (in the exit_syscall event)
-    NET_OPEN_SYSCALLS = ['accept', 'accept4', 'socket']
+    NET_OPEN_SYSCALLS = ['socket']
     # list of syscalls that can duplicate a FD
     DUP_OPEN_SYSCALLS = ['fcntl', 'dup', 'dup2', 'dup3']
     SYNC_SYSCALLS = ['sync', 'sync_file_range', 'fsync', 'fdatasync']

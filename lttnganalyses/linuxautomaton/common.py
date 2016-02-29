@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-#
 # The MIT License (MIT)
 #
 # Copyright (C) 2015 - Julien Desfossez <jdesfossez@efficios.com>
@@ -22,7 +20,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import math
 import re
 import time
 import datetime
@@ -30,7 +27,13 @@ import socket
 import struct
 
 NSEC_PER_SEC = 1000000000
-MSEC_PER_NSEC = 1000000
+NSEC_PER_MSEC = 1000000
+NSEC_PER_USEC = 1000
+
+BYTES_PER_TIB = 1099511627776
+BYTES_PER_GIB = 1073741824
+BYTES_PER_MIB = 1048576
+BYTES_PER_KIB = 1024
 
 O_CLOEXEC = 0o2000000
 
@@ -44,32 +47,6 @@ def get_syscall_name(event):
 
     # Name begins with syscall_entry_ (14 chars long)
     return name[14:]
-
-
-def convert_size(size, padding_after=False, padding_before=False):
-    if padding_after and size < 1024:
-        space_after = ' '
-    else:
-        space_after = ''
-    if padding_before and size < 1024:
-        space_before = ' '
-    else:
-        space_before = ''
-    if size <= 0:
-        return '0 ' + space_before + 'B' + space_after
-    size_name = ('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')
-    i = int(math.floor(math.log(size, 1024)))
-    p = math.pow(1024, i)
-    s = round(size/p, 2)
-    if s > 0:
-        try:
-            v = '%0.02f' % s
-            return '%s %s%s%s' % (v, space_before, size_name[i], space_after)
-        except:
-            print(i, size_name)
-            raise Exception('Too big to be true')
-    else:
-        return '0 B'
 
 
 def is_multi_day_trace_collection(handles):
@@ -112,7 +89,7 @@ def trace_collection_date(handles):
 def extract_timerange(handles, timerange, gmt):
     pattern = re.compile(r'^\[(?P<begin>.*),(?P<end>.*)\]$')
     if not pattern.match(timerange):
-        return None
+        return None, None
     begin_str = pattern.search(timerange).group('begin').strip()
     end_str = pattern.search(timerange).group('end').strip()
     begin = date_to_epoch_nsec(handles, begin_str, gmt)
@@ -122,19 +99,22 @@ def extract_timerange(handles, timerange, gmt):
 
 def date_to_epoch_nsec(handles, date, gmt):
     # match 2014-12-12 17:29:43.802588035 or 2014-12-12T17:29:43.802588035
-    pattern1 = re.compile(r'^(?P<year>\d\d\d\d)-(?P<mon>[01]\d)-'
-                          r'(?P<day>[0123]\d)[\sTt]'
-                          r'(?P<hour>\d\d):(?P<min>\d\d):(?P<sec>\d\d).'
-                          r'(?P<nsec>\d\d\d\d\d\d\d\d\d)$')
+    pattern1 = re.compile(r'^(?P<year>\d{4})-(?P<mon>[01]\d)-'
+                          r'(?P<day>[0-3]\d)[\sTt]'
+                          r'(?P<hour>\d{2}):(?P<min>\d{2}):(?P<sec>\d{2})\.'
+                          r'(?P<nsec>\d{9})$')
     # match 2014-12-12 17:29:43 or 2014-12-12T17:29:43
-    pattern2 = re.compile(r'^(?P<year>\d\d\d\d)-(?P<mon>[01]\d)-'
-                          r'(?P<day>[0123]\d)[\sTt]'
-                          r'(?P<hour>\d\d):(?P<min>\d\d):(?P<sec>\d\d)$')
+    pattern2 = re.compile(r'^(?P<year>\d{4})-(?P<mon>[01]\d)-'
+                          r'(?P<day>[0-3]\d)[\sTt]'
+                          r'(?P<hour>\d{2}):(?P<min>\d{2}):(?P<sec>\d{2})$')
     # match 17:29:43.802588035
-    pattern3 = re.compile(r'^(?P<hour>\d\d):(?P<min>\d\d):(?P<sec>\d\d).'
-                          r'(?P<nsec>\d\d\d\d\d\d\d\d\d)$')
+    pattern3 = re.compile(r'^(?P<hour>\d{2}):(?P<min>\d{2}):(?P<sec>\d{2})\.'
+                          r'(?P<nsec>\d{9})$')
     # match 17:29:43
-    pattern4 = re.compile(r'^(?P<hour>\d\d):(?P<min>\d\d):(?P<sec>\d\d)$')
+    pattern4 = re.compile(r'^(?P<hour>\d{2}):(?P<min>\d{2}):(?P<sec>\d{2})$')
+
+    # match 93847238974923874
+    pattern5 = re.compile(r'^\d+$')
 
     if pattern1.match(date):
         year = pattern1.search(date).group('year')
@@ -174,6 +154,8 @@ def date_to_epoch_nsec(handles, date, gmt):
         minute = pattern4.search(date).group('min')
         sec = pattern4.search(date).group('sec')
         nsec = 0
+    elif pattern5.match(date):
+        return int(date)
     else:
         return None
 
@@ -233,29 +215,85 @@ def int_to_ipv4(ip):
     return socket.inet_ntoa(struct.pack('!I', ip))
 
 
-def str_to_bytes(value):
-    num = ''
-    unit = ''
-    for i in value:
-        if i.isdigit() or i == '.':
-            num = num + i
-        elif i.isalnum():
-            unit = unit + i
-    num = float(num)
-    if not unit:
-        return int(num)
-    if unit in ['B']:
-        return int(num)
-    if unit in ['k', 'K', 'kB', 'KB']:
-        return int(num * 1024)
-    if unit in ['m', 'M', 'mB', 'MB']:
-        return int(num * 1024 * 1024)
-    if unit in ['g', 'G', 'gB', 'GB']:
-        return int(num * 1024 * 1024 * 1024)
-    if unit in ['t', 'T', 'tB', 'TB']:
-        return int(num * 1024 * 1024 * 1024 * 1024)
-    print('Unit', unit, 'not understood')
-    return None
+def size_str_to_bytes(size_str):
+    try:
+        units_index = next(i for i, c in enumerate(size_str) if c.isalpha())
+    except StopIteration:
+        # no units found
+        units_index = None
+
+    if units_index is not None:
+        size = size_str[:units_index]
+        units = size_str[units_index:]
+    else:
+        size = size_str
+        units = None
+
+    try:
+        size = float(size)
+    except ValueError:
+        raise ValueError('invalid size: {}'.format(size))
+
+    # no units defaults to bytes
+    if units is not None:
+        if units in ['t', 'T', 'tB', 'TB']:
+            size *= BYTES_PER_TIB
+        elif units in ['g', 'G', 'gB', 'GB']:
+            size *= BYTES_PER_GIB
+        elif units in ['m', 'M', 'mB', 'MB']:
+            size *= BYTES_PER_MIB
+        elif units in ['k', 'K', 'kB', 'KB']:
+            size *= BYTES_PER_KIB
+        elif units == 'B':
+            # bytes is already the target unit
+            pass
+        else:
+            raise ValueError('unrecognised units: {}'.format(units))
+
+    size = int(size)
+
+    return size
+
+
+def duration_str_to_ns(duration_str):
+    try:
+        units_index = next(i for i, c in enumerate(duration_str)
+                           if c.isalpha())
+    except StopIteration:
+        # no units found
+        units_index = None
+
+    if units_index is not None:
+        duration = duration_str[:units_index]
+        units = duration_str[units_index:].lower()
+    else:
+        duration = duration_str
+        units = None
+
+    try:
+        duration = float(duration)
+    except ValueError:
+        raise ValueError('invalid duration: {}'.format(duration))
+
+    if units is not None:
+        if units == 's':
+            duration *= NSEC_PER_SEC
+        elif units == 'ms':
+            duration *= NSEC_PER_MSEC
+        elif units in ['us', 'µs']:
+            duration *= NSEC_PER_USEC
+        elif units == 'ns':
+            # ns is already the target unit
+            pass
+        else:
+            raise ValueError('unrecognised units: {}'.format(units))
+    else:
+        # no units defaults to seconds
+        duration *= NSEC_PER_SEC
+
+    duration = int(duration)
+
+    return duration
 
 
 def get_v4_addr_str(ip):

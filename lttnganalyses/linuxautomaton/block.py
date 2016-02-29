@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-#
 # The MIT License (MIT)
 #
 # Copyright (C) 2015 - Julien Desfossez <jdesfossez@efficios.com>
@@ -35,12 +33,8 @@ class BlockStateProvider(sp.StateProvider):
             'block_bio_backmerge': self._process_block_bio_backmerge,
         }
 
-        self._state = state
+        super().__init__(state, cbs)
         self._remap_requests = []
-        self._register_cbs(cbs)
-
-    def process_event(self, ev):
-        self._process_event_cb(ev)
 
     def _process_block_bio_remap(self, event):
         dev = event['dev']
@@ -116,7 +110,10 @@ class BlockStateProvider(sp.StateProvider):
             return
 
         req.update_from_rq_complete(event)
-        proc = self._state.tids[req.tid]
+        if req.tid in self._state.tids.keys():
+            proc = self._state.tids[req.tid]
+        else:
+            proc = None
         self._state.send_notification_cb('block_rq_complete', req=req,
-                                         proc=proc)
+                                         proc=proc, cpu_id=event['cpu_id'])
         del disk.pending_requests[sector]

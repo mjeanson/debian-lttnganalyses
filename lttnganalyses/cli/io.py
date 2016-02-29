@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
-#
 # The MIT License (MIT)
 #
 # Copyright (C) 2015 - Julien Desfossez <jdesfossez@efficios.com>
 #               2015 - Antoine Busque <abusque@efficios.com>
+#               2015 - Philippe Proulx <pproulx@efficios.com>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,426 +22,706 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .command import Command
-from ..core import io
-from ..linuxautomaton import common
-from ..ascii_graph import Pyasciigraph
+import collections
 import operator
 import statistics
+import sys
+from . import mi
+from . import termgraph
+from ..core import io
+from ..common import format_utils
+from .command import Command
+from ..linuxautomaton import common
+
+
+_UsageTables = collections.namedtuple('_UsageTables', [
+    'per_proc_read',
+    'per_proc_write',
+    'per_file_read',
+    'per_file_write',
+    'per_proc_block_read',
+    'per_proc_block_write',
+    'per_disk_sector',
+    'per_disk_request',
+    'per_disk_rtps',
+    'per_netif_recv',
+    'per_netif_send',
+])
 
 
 class IoAnalysisCommand(Command):
     _DESC = """The I/O command."""
-
+    _ANALYSIS_CLASS = io.IoAnalysis
+    _MI_TITLE = 'I/O analysis'
+    _MI_DESCRIPTION = 'System call/disk latency statistics, system call ' + \
+                      'latency distribution, system call top latencies, ' + \
+                      'I/O usage top, and I/O operations log'
+    _MI_TAGS = [
+        mi.Tags.IO,
+        mi.Tags.SYSCALL,
+        mi.Tags.STATS,
+        mi.Tags.FREQ,
+        mi.Tags.LOG,
+        mi.Tags.TOP,
+    ]
+    _MI_TABLE_CLASS_SYSCALL_LATENCY_STATS = 'syscall-latency-stats'
+    _MI_TABLE_CLASS_PART_LATENCY_STATS = 'disk-latency-stats'
+    _MI_TABLE_CLASS_FREQ = 'freq'
+    _MI_TABLE_CLASS_TOP_SYSCALL = 'top-syscall'
+    _MI_TABLE_CLASS_LOG = 'log'
+    _MI_TABLE_CLASS_PER_PROCESS_TOP = 'per-process-top'
+    _MI_TABLE_CLASS_PER_FILE_TOP = 'per-file-top'
+    _MI_TABLE_CLASS_PER_PROCESS_TOP_BLOCK = 'per-process-top-block'
+    _MI_TABLE_CLASS_PER_DISK_TOP_SECTOR = 'per-disk-top-sector'
+    _MI_TABLE_CLASS_PER_DISK_TOP_REQUEST = 'per-disk-top-request'
+    _MI_TABLE_CLASS_PER_DISK_TOP_RTPS = 'per-disk-top-rps'
+    _MI_TABLE_CLASS_PER_NETIF_TOP = 'per-netif-top'
+    _MI_TABLE_CLASSES = [
+        (
+            _MI_TABLE_CLASS_SYSCALL_LATENCY_STATS,
+            'System call latency statistics', [
+                ('obj', 'System call category', mi.String),
+                ('count', 'Call count', mi.Integer, 'calls'),
+                ('min_latency', 'Minimum call latency', mi.Duration),
+                ('avg_latency', 'Average call latency', mi.Duration),
+                ('max_latency', 'Maximum call latency', mi.Duration),
+                ('stdev_latency', 'System call latency standard deviation',
+                 mi.Duration),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PART_LATENCY_STATS,
+            'Partition latency statistics', [
+                ('obj', 'Partition', mi.Disk),
+                ('count', 'Access count', mi.Integer, 'accesses'),
+                ('min_latency', 'Minimum access latency', mi.Duration),
+                ('avg_latency', 'Average access latency', mi.Duration),
+                ('max_latency', 'Maximum access latency', mi.Duration),
+                ('stdev_latency', 'System access latency standard deviation',
+                 mi.Duration),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_FREQ,
+            'I/O request latency distribution', [
+                ('latency_lower', 'Latency (lower bound)', mi.Duration),
+                ('latency_upper', 'Latency (upper bound)', mi.Duration),
+                ('count', 'Request count', mi.Integer, 'requests'),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_TOP_SYSCALL,
+            'Top system call latencies', [
+                ('time_range', 'Call time range', mi.TimeRange),
+                ('out_of_range', 'System call out of range?', mi.Boolean),
+                ('duration', 'Call duration', mi.Duration),
+                ('syscall', 'System call', mi.Syscall),
+                ('size', 'Read/write size', mi.Size),
+                ('process', 'Process', mi.Process),
+                ('path', 'File path', mi.Path),
+                ('fd', 'File descriptor', mi.Fd),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_LOG,
+            'I/O operations log', [
+                ('time_range', 'Call time range', mi.TimeRange),
+                ('out_of_range', 'System call out of range?', mi.Boolean),
+                ('duration', 'Call duration', mi.Duration),
+                ('syscall', 'System call', mi.Syscall),
+                ('size', 'Read/write size', mi.Size),
+                ('process', 'Process', mi.Process),
+                ('path', 'File path', mi.Path),
+                ('fd', 'File descriptor', mi.Fd),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_PROCESS_TOP,
+            'Per-process top I/O operations', [
+                ('process', 'Process', mi.Process),
+                ('size', 'Total operations size', mi.Size),
+                ('disk_size', 'Disk operations size', mi.Size),
+                ('net_size', 'Network operations size', mi.Size),
+                ('unknown_size', 'Unknown operations size', mi.Size),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_FILE_TOP,
+            'Per-file top I/O operations', [
+                ('path', 'File path/info', mi.Path),
+                ('size', 'Operations size', mi.Size),
+                ('fd_owners', 'File descriptor owners', mi.String),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_PROCESS_TOP_BLOCK,
+            'Per-process top block I/O operations', [
+                ('process', 'Process', mi.Process),
+                ('size', 'Operations size', mi.Size),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_DISK_TOP_SECTOR,
+            'Per-disk top sector I/O operations', [
+                ('disk', 'Disk', mi.Disk),
+                ('count', 'Sector count', mi.Integer, 'sectors'),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_DISK_TOP_REQUEST,
+            'Per-disk top I/O requests', [
+                ('disk', 'Disk', mi.Disk),
+                ('count', 'Request count', mi.Integer, 'I/O requests'),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_DISK_TOP_RTPS,
+            'Per-disk top I/O request time/sector', [
+                ('disk', 'Disk', mi.Disk),
+                ('rtps', 'Request time/sector', mi.Duration),
+            ]
+        ),
+        (
+            _MI_TABLE_CLASS_PER_NETIF_TOP,
+            'Per-network interface top I/O operations', [
+                ('netif', 'Network interface', mi.NetIf),
+                ('size', 'Operations size', mi.Size),
+            ]
+        ),
+    ]
     _LATENCY_STATS_FORMAT = '{:<14} {:>14} {:>14} {:>14} {:>14} {:>14}'
     _SECTION_SEPARATOR_STRING = '-' * 89
 
-    def __init__(self):
-        super().__init__(self._add_arguments,
-                         enable_proc_filter_args=True,
-                         enable_max_min_args=True,
-                         enable_max_min_size_arg=True,
-                         enable_log_arg=True)
+    def _analysis_tick(self, begin_ns, end_ns):
+        syscall_latency_stats_table = None
+        disk_latency_stats_table = None
+        freq_tables = None
+        top_tables = None
+        log_table = None
+        usage_tables = None
 
-    def _validate_transform_args(self):
-        self._arg_usage = self._args.usage
-        self._arg_stats = self._args.latencystats
-        self._arg_latencytop = self._args.latencytop
-        self._arg_freq = self._args.latencyfreq
-        self._arg_freq_resolution = self._args.freq_resolution
+        if self._args.stats:
+            syscall_latency_stats_table, disk_latency_stats_table = \
+                self._get_latency_stats_result_tables(begin_ns, end_ns)
 
-    def _default_args(self, stats, log, freq, usage, latencytop):
-        if stats:
-            self._arg_stats = True
-        if log:
-            self._arg_log = True
-        if freq:
-            self._arg_freq = True
-        if usage:
-            self._arg_usage = True
-        if latencytop:
-            self._arg_latencytop = True
+        if self._args.freq:
+            freq_tables = self._get_freq_result_tables(begin_ns, end_ns)
 
-    def run(self, stats=False, log=False, freq=False, usage=False,
-            latencytop=False):
-        # parse arguments first
-        self._parse_args()
-        # validate, transform and save specific arguments
-        self._validate_transform_args()
-        # handle the default args for different executables
-        self._default_args(stats, log, freq, usage, latencytop)
-        # open the trace
-        self._open_trace()
-        # create the appropriate analysis/analyses
-        self._create_analysis()
-        # run the analysis
-        self._run_analysis(self._reset_total, self._refresh)
-        # print results
-        self._print_results(self.start_ns, self.trace_end_ts)
-        # close the trace
-        self._close_trace()
+        if self._args.usage:
+            usage_tables = self._get_usage_result_tables(begin_ns, end_ns)
 
-    def run_stats(self):
-        self.run(stats=True)
+        if self._args.top:
+            top_tables = self._get_top_result_tables(begin_ns, end_ns)
 
-    def run_latencytop(self):
-        self.run(latencytop=True)
+        if self._args.log:
+            log_table = self._get_log_result_table(begin_ns, end_ns)
 
-    def run_log(self):
-        self.run(log=True)
+        if self._mi_mode:
+            self._mi_append_result_tables([
+                log_table,
+                syscall_latency_stats_table,
+                disk_latency_stats_table,
+            ])
+            self._mi_append_result_tables(top_tables)
+            self._mi_append_result_tables(usage_tables)
+            self._mi_append_result_tables(freq_tables)
+        else:
+            self._print_date(begin_ns, end_ns)
 
-    def run_freq(self):
-        self.run(freq=True)
+            if self._args.usage:
+                self._print_usage(usage_tables)
 
-    def run_usage(self):
-        self.run(usage=True)
+            if self._args.stats:
+                self._print_latency_stats(syscall_latency_stats_table,
+                                          disk_latency_stats_table)
 
-    def _create_analysis(self):
-        self._analysis = io.IoAnalysis(self.state)
+            if self._args.top:
+                self._print_top(top_tables)
 
-    def _refresh(self, begin, end):
-        self._print_results(begin, end)
-        self._reset_total(end)
+            if self._args.freq:
+                self._print_freq(freq_tables)
+
+            if self._args.log:
+                self._print_log(log_table)
+
+    def _create_summary_result_tables(self):
+        # TODO: create a summary table here
+        self._mi_clear_result_tables()
 
     # Filter predicates
     def _filter_size(self, size):
         if size is None:
             return True
-        if self._arg_maxsize is not None and size > self._arg_maxsize:
+        if self._args.maxsize is not None and size > self._args.maxsize:
             return False
-        if self._arg_minsize is not None and size < self._arg_minsize:
+        if self._args.minsize is not None and size < self._args.minsize:
             return False
         return True
 
     def _filter_latency(self, duration):
-        if self._arg_max is not None and (duration/1000) > self._arg_max:
+        if self._args.max is not None and duration > self._args.max:
             return False
-        if self._arg_min is not None and (duration/1000) < self._arg_min:
+        if self._args.min is not None and duration < self._args.min:
             return False
         return True
 
     def _filter_time_range(self, begin, end):
-        return not (self._arg_begin and self._arg_end and end and
-                    begin > self._arg_end)
+        # Note: we only want to return False only when a request has
+        # ended and is completely outside the timerange (i.e. begun
+        # after the end of the time range).
+        return not (self._args.begin and self._args.end and end and
+                    begin > self._args.end)
 
     def _filter_io_request(self, io_rq):
-        proc = self._analysis.tids[io_rq.tid]
-        return self._filter_process(proc) and \
-            self._filter_size(io_rq.size) and \
+        return self._filter_size(io_rq.size) and \
             self._filter_latency(io_rq.duration) and \
             self._filter_time_range(io_rq.begin_ts, io_rq.end_ts)
 
     def _is_io_rq_out_of_range(self, io_rq):
-        return self._arg_begin and io_rq.begin_ts < self._arg_begin or \
-            self._arg_end and io_rq.end_ts > self._arg_end
+        return self._args.begin and io_rq.begin_ts < self._args.begin or \
+            self._args.end and io_rq.end_ts > self._args.end
 
-    def _print_ascii_graph(self, input_list, get_datum_cb, graph_label,
-                           graph_args=None):
-        """Print an ascii graph for given data
+    def _append_per_proc_read_usage_row(self, proc_stats, result_table):
+        result_table.append_row(
+            process=mi.Process(proc_stats.comm, pid=proc_stats.pid,
+                               tid=proc_stats.tid),
+            size=mi.Size(proc_stats.total_read),
+            disk_size=mi.Size(proc_stats.disk_io.read),
+            net_size=mi.Size(proc_stats.net_io.read),
+            unknown_size=mi.Size(proc_stats.unk_io.read),
+        )
 
-        This method wraps the ascii_graph module and facilitates the
-        printing of a graph with a limited number of lines.
+        return True
 
-        Args:
-            input_list (list): A list of objects from which the data
-            for the graph will be generated.
+    def _append_per_proc_write_usage_row(self, proc_stats, result_table):
+        result_table.append_row(
+            process=mi.Process(proc_stats.comm, pid=proc_stats.pid,
+                               tid=proc_stats.tid),
+            size=mi.Size(proc_stats.total_write),
+            disk_size=mi.Size(proc_stats.disk_io.write),
+            net_size=mi.Size(proc_stats.net_io.write),
+            unknown_size=mi.Size(proc_stats.unk_io.write),
+        )
 
-            get_datum_cb (function): function that takes a single
-            object from the input list as an argument, and returns a
-            datum tuple for the graph, of the form (string, int). The
-            string element is printed as is in the graph, and the int
-            is the numeric value corresponding to this graph entry.
+        return True
 
-            graph_label (string): Label used to identify the printed
-            graph.
+    def _append_per_proc_block_read_usage_row(self, proc_stats, result_table):
+        if proc_stats.block_io.read == 0:
+            return False
 
-            graph_args (dict, optional): Dict of keyword args to be
-            passed to the graph() function as is.
-        """
+        if proc_stats.comm:
+            proc_name = proc_stats.comm
+        else:
+            proc_name = None
+
+        result_table.append_row(
+            process=mi.Process(proc_name, pid=proc_stats.pid,
+                               tid=proc_stats.tid),
+            size=mi.Size(proc_stats.block_io.read),
+        )
+
+        return True
+
+    def _append_per_proc_block_write_usage_row(self, proc_stats, result_table):
+        if proc_stats.block_io.write == 0:
+            return False
+
+        if proc_stats.comm:
+            proc_name = proc_stats.comm
+        else:
+            proc_name = None
+
+        result_table.append_row(
+            process=mi.Process(proc_name, pid=proc_stats.pid,
+                               tid=proc_stats.tid),
+            size=mi.Size(proc_stats.block_io.write),
+        )
+
+        return True
+
+    def _append_disk_sector_usage_row(self, disk_stats, result_table):
+        if disk_stats.total_rq_sectors == 0:
+            return None
+
+        result_table.append_row(
+            disk=mi.Disk(disk_stats.disk_name),
+            count=mi.Integer(disk_stats.total_rq_sectors),
+        )
+
+        return True
+
+    def _append_disk_request_usage_row(self, disk_stats, result_table):
+        if disk_stats.rq_count == 0:
+            return False
+
+        result_table.append_row(
+            disk=mi.Disk(disk_stats.disk_name),
+            count=mi.Integer(disk_stats.rq_count),
+        )
+
+        return True
+
+    def _append_disk_rtps_usage_row(self, disk_stats, result_table):
+        if disk_stats.rq_count == 0:
+            return False
+
+        avg_latency = (disk_stats.total_rq_duration / disk_stats.rq_count)
+        result_table.append_row(
+            disk=mi.Disk(disk_stats.disk_name),
+            rtps=mi.Duration(avg_latency),
+        )
+
+        return True
+
+    def _append_netif_recv_usage_row(self, netif_stats, result_table):
+        result_table.append_row(
+            netif=mi.NetIf(netif_stats.name),
+            size=mi.Size(netif_stats.recv_bytes)
+        )
+
+        return True
+
+    def _append_netif_send_usage_row(self, netif_stats, result_table):
+        result_table.append_row(
+            netif=mi.NetIf(netif_stats.name),
+            size=mi.Size(netif_stats.sent_bytes)
+        )
+
+        return True
+
+    def _get_file_stats_fd_owners_str(self, file_stats):
+        fd_by_pid_str = ''
+
+        for pid, fd in file_stats.fd_by_pid.items():
+            comm = self._analysis.tids[pid].comm
+            fd_by_pid_str += 'fd %d in %s (%s) ' % (fd, comm, pid)
+
+        return fd_by_pid_str
+
+    def _append_file_read_usage_row(self, file_stats, result_table):
+        if file_stats.io.read == 0:
+            return False
+
+        fd_owners = self._get_file_stats_fd_owners_str(file_stats)
+        result_table.append_row(
+            path=mi.Path(file_stats.filename),
+            size=mi.Size(file_stats.io.read),
+            fd_owners=mi.String(fd_owners),
+        )
+
+        return True
+
+    def _append_file_write_usage_row(self, file_stats, result_table):
+        if file_stats.io.write == 0:
+            return False
+
+        fd_owners = self._get_file_stats_fd_owners_str(file_stats)
+        result_table.append_row(
+            path=mi.Path(file_stats.filename),
+            size=mi.Size(file_stats.io.write),
+            fd_owners=mi.String(fd_owners),
+        )
+
+        return True
+
+    def _fill_usage_result_table(self, input_list, append_row_cb,
+                                 result_table):
         count = 0
-        limit = self._arg_limit
-        graph = Pyasciigraph()
-        data = []
-        if graph_args is None:
-            graph_args = {}
+        limit = self._args.limit
 
         for elem in input_list:
-            datum = get_datum_cb(elem)
-            if datum is not None:
-                data.append(datum)
+            if append_row_cb(elem, result_table):
                 count += 1
+
                 if limit is not None and count >= limit:
                     break
 
-        for line in graph.graph(graph_label, data, **graph_args):
-            print(line)
-
-    # I/O Top output methods
-    def _get_read_datum(self, proc_stats):
-        if not self._filter_process(proc_stats):
-            return None
-
-        if proc_stats.pid is None:
-            pid_str = 'unknown (tid=%d)' % (proc_stats.tid)
-        else:
-            pid_str = str(proc_stats.pid)
-
-        format_str = '{:>10} {:<25} {:>9} file {:>9} net {:>9} unknown'
-        output_str = format_str.format(
-            common.convert_size(proc_stats.total_read, padding_after=True),
-            '%s (%s)' % (proc_stats.comm, pid_str),
-            common.convert_size(proc_stats.disk_read, padding_after=True),
-            common.convert_size(proc_stats.net_read, padding_after=True),
-            common.convert_size(proc_stats.unk_read, padding_after=True))
-
-        return (output_str, proc_stats.total_read)
-
-    def _get_write_datum(self, proc_stats):
-        if not self._filter_process(proc_stats):
-            return None
-
-        if proc_stats.pid is None:
-            pid_str = 'unknown (tid=%d)' % (proc_stats.tid)
-        else:
-            pid_str = str(proc_stats.pid)
-
-        format_str = '{:>10} {:<25} {:>9} file {:>9} net {:>9} unknown'
-        output_str = format_str.format(
-            common.convert_size(proc_stats.total_write, padding_after=True),
-            '%s (%s)' % (proc_stats.comm, pid_str),
-            common.convert_size(proc_stats.disk_write, padding_after=True),
-            common.convert_size(proc_stats.net_write, padding_after=True),
-            common.convert_size(proc_stats.unk_write, padding_after=True))
-
-        return (output_str, proc_stats.total_write)
-
-    def _get_block_read_datum(self, proc_stats):
-        if not self._filter_process(proc_stats) or proc_stats.block_read == 0:
-            return None
-
-        comm = proc_stats.comm
-        if not comm:
-            comm = 'unknown'
-
-        if proc_stats.pid is None:
-            pid_str = 'unknown (tid=%d)' % (proc_stats.tid)
-        else:
-            pid_str = str(proc_stats.pid)
-
-        format_str = '{:>10} {:<22}'
-        output_str = format_str.format(
-            common.convert_size(proc_stats.block_read, padding_after=True),
-            '%s (pid=%s)' % (comm, pid_str))
-
-        return (output_str, proc_stats.block_read)
-
-    def _get_block_write_datum(self, proc_stats):
-        if not self._filter_process(proc_stats) or \
-           proc_stats.block_write == 0:
-            return None
-
-        comm = proc_stats.comm
-        if not comm:
-            comm = 'unknown'
-
-        if proc_stats.pid is None:
-            pid_str = 'unknown (tid=%d)' % (proc_stats.tid)
-        else:
-            pid_str = str(proc_stats.pid)
-
-        format_str = '{:>10} {:<22}'
-        output_str = format_str.format(
-            common.convert_size(proc_stats.block_write, padding_after=True),
-            '%s (pid=%s)' % (comm, pid_str))
-
-        return (output_str, proc_stats.block_write)
-
-    def _get_total_rq_sectors_datum(self, disk):
-        if disk.total_rq_sectors == 0:
-            return None
-
-        return (disk.disk_name, disk.total_rq_sectors)
-
-    def _get_rq_count_datum(self, disk):
-        if disk.rq_count == 0:
-            return None
-
-        return (disk.disk_name, disk.rq_count)
-
-    def _get_avg_disk_latency_datum(self, disk):
-        if disk.rq_count == 0:
-            return None
-
-        avg_latency = ((disk.total_rq_duration / disk.rq_count) /
-                       common.MSEC_PER_NSEC)
-        avg_latency = round(avg_latency, 3)
-
-        return ('%s' % disk.disk_name, avg_latency)
-
-    def _get_net_recv_bytes_datum(self, iface):
-        return ('%s %s' % (common.convert_size(iface.recv_bytes), iface.name),
-                iface.recv_bytes)
-
-    def _get_net_sent_bytes_datum(self, iface):
-        return ('%s %s' % (common.convert_size(iface.sent_bytes), iface.name),
-                iface.sent_bytes)
-
-    def _get_file_read_datum(self, file_stats):
-        if file_stats.read == 0:
-            return None
-
-        fd_by_pid_str = ''
-        for pid, fd in file_stats.fd_by_pid.items():
-            comm = self._analysis.tids[pid].comm
-            fd_by_pid_str += 'fd %d in %s (%s) ' % (fd, comm, pid)
-
-        format_str = '{:>10} {} {}'
-        output_str = format_str.format(
-            common.convert_size(file_stats.read, padding_after=True),
-            file_stats.filename,
-            fd_by_pid_str)
-
-        return (output_str, file_stats.read)
-
-    def _get_file_write_datum(self, file_stats):
-        if file_stats.write == 0:
-            return None
-
-        fd_by_pid_str = ''
-        for pid, fd in file_stats.fd_by_pid.items():
-            comm = self._analysis.tids[pid].comm
-            fd_by_pid_str += 'fd %d in %s (%s) ' % (fd, comm, pid)
-
-        format_str = '{:>10} {} {}'
-        output_str = format_str.format(
-            common.convert_size(file_stats.write, padding_after=True),
-            file_stats.filename,
-            fd_by_pid_str)
-
-        return (output_str, file_stats.write)
-
-    def _output_read(self):
+    def _fill_per_process_read_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.tids.values(),
                             key=operator.attrgetter('total_read'),
                             reverse=True)
-        label = 'Per-process I/O Read'
-        graph_args = {'with_value': False}
-        self._print_ascii_graph(input_list, self._get_read_datum, label,
-                                graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_per_proc_read_usage_row,
+                                      result_table)
 
-    def _output_write(self):
+    def _fill_per_process_write_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.tids.values(),
                             key=operator.attrgetter('total_write'),
                             reverse=True)
-        label = 'Per-process I/O Write'
-        graph_args = {'with_value': False}
-        self._print_ascii_graph(input_list, self._get_write_datum, label,
-                                graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_per_proc_write_usage_row,
+                                      result_table)
 
-    def _output_block_read(self):
+    def _fill_per_process_block_read_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.tids.values(),
-                            key=operator.attrgetter('block_read'),
+                            key=operator.attrgetter('block_io.read'),
                             reverse=True)
-        label = 'Block I/O Read'
-        graph_args = {'with_value': False}
-        self._print_ascii_graph(input_list, self._get_block_read_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(
+            input_list, self._append_per_proc_block_read_usage_row,
+            result_table)
 
-    def _output_block_write(self):
+    def _fill_per_process_block_write_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.tids.values(),
-                            key=operator.attrgetter('block_write'),
+                            key=operator.attrgetter('block_io.write'),
                             reverse=True)
-        label = 'Block I/O Write'
-        graph_args = {'with_value': False}
-        self._print_ascii_graph(input_list, self._get_block_write_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(
+            input_list, self._append_per_proc_block_write_usage_row,
+            result_table)
 
-    def _output_total_rq_sectors(self):
+    def _fill_disk_sector_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.disks.values(),
                             key=operator.attrgetter('total_rq_sectors'),
                             reverse=True)
-        label = 'Disk requests sector count'
-        graph_args = {'unit': ' sectors'}
-        self._print_ascii_graph(input_list, self._get_total_rq_sectors_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_disk_sector_usage_row,
+                                      result_table)
 
-    def _output_rq_count(self):
+    def _fill_disk_request_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.disks.values(),
                             key=operator.attrgetter('rq_count'),
                             reverse=True)
-        label = 'Disk request count'
-        graph_args = {'unit': ' requests'}
-        self._print_ascii_graph(input_list, self._get_rq_count_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_disk_request_usage_row,
+                                      result_table)
 
-    def _output_avg_disk_latency(self):
+    def _fill_disk_rtps_usage_result_table(self, result_table):
         input_list = self._analysis.disks.values()
-        label = 'Disk request average latency'
-        graph_args = {'unit': ' ms', 'sort': 2}
-        self._print_ascii_graph(input_list, self._get_avg_disk_latency_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_disk_rtps_usage_row,
+                                      result_table)
 
-    def _output_net_recv_bytes(self):
+    def _fill_netif_recv_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.ifaces.values(),
                             key=operator.attrgetter('recv_bytes'),
                             reverse=True)
-        label = 'Network received bytes'
-        graph_args = {'with_value': False}
-        self._print_ascii_graph(input_list, self._get_net_recv_bytes_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_netif_recv_usage_row,
+                                      result_table)
 
-    def _output_net_sent_bytes(self):
+    def _fill_netif_send_usage_result_table(self, result_table):
         input_list = sorted(self._analysis.ifaces.values(),
                             key=operator.attrgetter('sent_bytes'),
                             reverse=True)
-        label = 'Network sent bytes'
-        graph_args = {'with_value': False}
-        self._print_ascii_graph(input_list, self._get_net_sent_bytes_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_netif_send_usage_row,
+                                      result_table)
 
-    def _output_file_read(self, files):
+    def _fill_file_read_usage_result_table(self, files, result_table):
         input_list = sorted(files.values(),
-                            key=lambda file_stats: file_stats.read,
+                            key=lambda file_stats: file_stats.io.read,
                             reverse=True)
-        label = 'Files read'
-        graph_args = {'with_value': False, 'sort': 2}
-        self._print_ascii_graph(input_list, self._get_file_read_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_file_read_usage_row,
+                                      result_table)
 
-    def _output_file_write(self, files):
+    def _fill_file_write_usage_result_table(self, files, result_table):
         input_list = sorted(files.values(),
-                            key=lambda file_stats: file_stats.write,
+                            key=lambda file_stats: file_stats.io.write,
                             reverse=True)
-        label = 'Files write'
-        graph_args = {'with_value': False, 'sort': 2}
-        self._print_ascii_graph(input_list, self._get_file_write_datum,
-                                label, graph_args)
+        self._fill_usage_result_table(input_list,
+                                      self._append_file_write_usage_row,
+                                      result_table)
 
-    def _output_file_read_write(self):
-        files = self._analysis.get_files_stats(self._arg_pid_list,
-                                               self._arg_proc_list)
-        self._output_file_read(files)
-        self._output_file_write(files)
+    def _fill_file_usage_result_tables(self, read_table, write_table):
+        files = self._analysis.get_files_stats()
+        self._fill_file_read_usage_result_table(files, read_table)
+        self._fill_file_write_usage_result_table(files, write_table)
 
-    def iotop_output(self):
-        self._output_read()
-        self._output_write()
-        self._output_file_read_write()
-        self._output_block_read()
-        self._output_block_write()
-        self._output_total_rq_sectors()
-        self._output_rq_count()
-        self._output_avg_disk_latency()
-        self._output_net_recv_bytes()
-        self._output_net_sent_bytes()
+    def _get_usage_result_tables(self, begin, end):
+        # create result tables
+        per_proc_read_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_PROCESS_TOP, begin, end, 'read')
+        per_proc_write_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_PROCESS_TOP, begin, end, 'written')
+        per_file_read_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_FILE_TOP, begin, end, 'read')
+        per_file_write_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_FILE_TOP, begin, end, 'written')
+        per_proc_block_read_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_PROCESS_TOP_BLOCK, begin, end, 'read')
+        per_proc_block_write_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_PROCESS_TOP_BLOCK, begin, end, 'written')
+        per_disk_sector_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_DISK_TOP_SECTOR, begin, end)
+        per_disk_request_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_DISK_TOP_REQUEST, begin, end)
+        per_disk_rtps_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_DISK_TOP_RTPS, begin, end)
+        per_netif_recv_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_NETIF_TOP, begin, end, 'received')
+        per_netif_send_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PER_NETIF_TOP, begin, end, 'sent')
 
-    # I/O Latency frequency output methods
-    def _print_frequency_distribution(self, duration_list, title):
+        # fill result tables
+        self._fill_per_process_read_usage_result_table(per_proc_read_table)
+        self._fill_per_process_write_usage_result_table(per_proc_write_table)
+        self._fill_file_usage_result_tables(per_file_read_table,
+                                            per_file_write_table)
+        self._fill_per_process_block_read_usage_result_table(
+            per_proc_block_read_table)
+        self._fill_per_process_block_write_usage_result_table(
+            per_proc_block_write_table)
+        self._fill_disk_sector_usage_result_table(per_disk_sector_table)
+        self._fill_disk_request_usage_result_table(per_disk_request_table)
+        self._fill_disk_rtps_usage_result_table(per_disk_rtps_table)
+        self._fill_netif_recv_usage_result_table(per_netif_recv_table)
+        self._fill_netif_send_usage_result_table(per_netif_send_table)
+
+        return _UsageTables(
+            per_proc_read=per_proc_read_table,
+            per_proc_write=per_proc_write_table,
+            per_file_read=per_file_read_table,
+            per_file_write=per_file_write_table,
+            per_proc_block_read=per_proc_block_read_table,
+            per_proc_block_write=per_proc_block_write_table,
+            per_disk_sector=per_disk_sector_table,
+            per_disk_request=per_disk_request_table,
+            per_disk_rtps=per_disk_rtps_table,
+            per_netif_recv=per_netif_recv_table,
+            per_netif_send=per_netif_send_table,
+        )
+
+    def _print_per_proc_io(self, result_table, title):
+        header_format = '{:<25} {:<10} {:<10} {:<10}'
+        label_header = header_format.format(
+            'Process', 'Disk', 'Net', 'Unknown'
+        )
+
+        def get_label(row):
+            label_format = '{:<25} {:>10} {:>10} {:>10}'
+            if row.process.pid is None:
+                pid_str = 'unknown (tid=%d)' % (row.process.tid)
+            else:
+                pid_str = str(row.process.pid)
+
+            label = label_format.format(
+                '%s (%s)' % (row.process.name, pid_str),
+                format_utils.format_size(row.disk_size.value),
+                format_utils.format_size(row.net_size.value),
+                format_utils.format_size(row.unknown_size.value)
+            )
+
+            return label
+
+        graph = termgraph.BarGraph(
+            title='Per-process I/O ' + title,
+            label_header=label_header,
+            get_value=lambda row: row.size.value,
+            get_value_str=format_utils.format_size,
+            get_label=get_label,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_proc_block_io(self, result_table, title):
+        def get_label(row):
+            proc_name = row.process.name
+
+            if not proc_name:
+                proc_name = 'unknown'
+
+            if row.process.pid is None:
+                pid_str = 'unknown (tid={})'.format(row.process.tid)
+            else:
+                pid_str = str(row.process.pid)
+
+            return '{} (pid={})'.format(proc_name, pid_str)
+
+        graph = termgraph.BarGraph(
+            title='Block I/O ' + title,
+            label_header='Process',
+            get_value=lambda row: row.size.value,
+            get_value_str=format_utils.format_size,
+            get_label=get_label,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_disk_sector(self, result_table):
+        graph = termgraph.BarGraph(
+            title='Disk Requests Sector Count',
+            label_header='Disk',
+            unit='sectors',
+            get_value=lambda row: row.count.value,
+            get_label=lambda row: row.disk.name,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_disk_request(self, result_table):
+        graph = termgraph.BarGraph(
+            title='Disk Request Count',
+            label_header='Disk',
+            unit='requests',
+            get_value=lambda row: row.count.value,
+            get_label=lambda row: row.disk.name,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_disk_rtps(self, result_table):
+        graph = termgraph.BarGraph(
+            title='Disk Request Average Latency',
+            label_header='Disk',
+            unit='ms',
+            get_value=lambda row: row.rtps.value / common.NSEC_PER_MSEC,
+            get_label=lambda row: row.disk.name,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_netif_io(self, result_table, title):
+        graph = termgraph.BarGraph(
+            title='Network ' + title + ' Bytes',
+            label_header='Interface',
+            get_value=lambda row: row.size.value,
+            get_value_str=format_utils.format_size,
+            get_label=lambda row: row.netif.name,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_per_file_io(self, result_table, title):
+        # FIXME add option to show FD owners
+        # FIXME why are read and write values the same?
+        graph = termgraph.BarGraph(
+            title='Per-file I/O ' + title,
+            label_header='Path',
+            get_value=lambda row: row.size.value,
+            get_value_str=format_utils.format_size,
+            get_label=lambda row: row.path.path,
+            data=result_table.rows
+        )
+
+        graph.print_graph()
+
+    def _print_usage(self, usage_tables):
+        self._print_per_proc_io(usage_tables.per_proc_read, 'Read')
+        self._print_per_proc_io(usage_tables.per_proc_write, 'Write')
+        self._print_per_file_io(usage_tables.per_file_read, 'Read')
+        self._print_per_file_io(usage_tables.per_file_write, 'Write')
+        self._print_per_proc_block_io(usage_tables.per_proc_block_read, 'Read')
+        self._print_per_proc_block_io(
+            usage_tables.per_proc_block_write, 'Write'
+        )
+        self._print_per_disk_sector(usage_tables.per_disk_sector)
+        self._print_per_disk_request(usage_tables.per_disk_request)
+        self._print_per_disk_rtps(usage_tables.per_disk_rtps)
+        self._print_per_netif_io(usage_tables.per_netif_recv, 'Received')
+        self._print_per_netif_io(usage_tables.per_netif_send, 'Sent')
+
+    def _fill_freq_result_table(self, duration_list, result_table):
         if not duration_list:
             return
 
         # The number of bins for the histogram
-        resolution = self._arg_freq_resolution
+        resolution = self._args.freq_resolution
 
         min_duration = min(duration_list)
         max_duration = max(duration_list)
@@ -451,233 +730,356 @@ class IoAnalysisCommand(Command):
         max_duration /= 1000
 
         step = (max_duration - min_duration) / resolution
+
         if step == 0:
             return
 
         buckets = []
         values = []
-        graph = Pyasciigraph()
+
         for i in range(resolution):
             buckets.append(i * step)
             values.append(0)
+
         for duration in duration_list:
             duration /= 1000
             index = min(int((duration - min_duration) / step), resolution - 1)
             values[index] += 1
 
-        graph_data = []
         for index, value in enumerate(values):
-            # The graph data format is a tuple (info, value). Here info
-            # is the lower bound of the bucket, value the bucket's count
-            graph_data.append(('%0.03f' % (index * step + min_duration),
-                               value))
+            result_table.append_row(
+                latency_lower=mi.Duration.from_us(index * step + min_duration),
+                latency_upper=mi.Duration.from_us((index + 1) * step +
+                                                  min_duration),
+                count=mi.Integer(value),
+            )
 
-        graph_lines = graph.graph(
-            title,
-            graph_data,
-            info_before=True,
-            count=True
+    def _get_disk_freq_result_tables(self, begin, end):
+        result_tables = []
+
+        for disk in self._analysis.disks.values():
+            rq_durations = [rq.duration for rq in disk.rq_list if
+                            self._filter_io_request(rq)]
+            subtitle = 'disk: {}'.format(disk.disk_name)
+            result_table = \
+                self._mi_create_result_table(self._MI_TABLE_CLASS_FREQ,
+                                             begin, end, subtitle)
+            self._fill_freq_result_table(rq_durations, result_table)
+            result_tables.append(result_table)
+
+        return result_tables
+
+    def _get_syscall_freq_result_tables(self, begin, end):
+        open_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_FREQ,
+                                         begin, end, 'open')
+        read_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_FREQ,
+                                         begin, end, 'read')
+        write_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_FREQ,
+                                         begin, end, 'write')
+        sync_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_FREQ,
+                                         begin, end, 'sync')
+        self._fill_freq_result_table([io_rq.duration for io_rq in
+                                      self._analysis.open_io_requests if
+                                      self._filter_io_request(io_rq)],
+                                     open_table)
+        self._fill_freq_result_table([io_rq.duration for io_rq in
+                                      self._analysis.read_io_requests if
+                                      self._filter_io_request(io_rq)],
+                                     read_table)
+        self._fill_freq_result_table([io_rq.duration for io_rq in
+                                      self._analysis.write_io_requests if
+                                      self._filter_io_request(io_rq)],
+                                     write_table)
+        self._fill_freq_result_table([io_rq.duration for io_rq in
+                                      self._analysis.sync_io_requests if
+                                      self._filter_io_request(io_rq)],
+                                     sync_table)
+
+        return [open_table, read_table, write_table, sync_table]
+
+    def _get_freq_result_tables(self, begin, end):
+        syscall_tables = self._get_syscall_freq_result_tables(begin, end)
+        disk_tables = self._get_disk_freq_result_tables(begin, end)
+
+        return syscall_tables + disk_tables
+
+    def _print_one_freq(self, result_table):
+        graph = termgraph.FreqGraph(
+            data=result_table.rows,
+            get_value=lambda row: row.count.value,
+            get_lower_bound=lambda row: row.latency_lower.to_us(),
+            title='{} {}'.format(result_table.title, result_table.subtitle),
+            unit='µs'
         )
 
-        for line in graph_lines:
-            print(line)
+        graph.print_graph()
 
-        print()
+    def _print_freq(self, freq_tables):
+        for freq_table in freq_tables:
+            self._print_one_freq(freq_table)
 
-    def _output_disk_latency_freq(self):
-        for disk in self._analysis.disks.values():
-            rq_durations = [rq.duration for rq in disk.rq_list]
-            self._print_frequency_distribution(
-                rq_durations,
-                'Frequency distribution for disk %s (usec)' % (disk.disk_name))
-
-    def iolatency_output(self):
-        self._output_disk_latency_freq()
-
-    def iolatency_syscalls_output(self):
-        print()
-        self._print_frequency_distribution([io_rq.duration for io_rq in
-                                            self._analysis.open_io_requests if
-                                            self._filter_io_request(io_rq)],
-                                           'Open latency distribution (usec)')
-        self._print_frequency_distribution([io_rq.duration for io_rq in
-                                            self._analysis.read_io_requests if
-                                            self._filter_io_request(io_rq)],
-                                           'Read latency distribution (usec)')
-        self._print_frequency_distribution([io_rq.duration for io_rq in
-                                            self._analysis.write_io_requests if
-                                            self._filter_io_request(io_rq)],
-                                           'Write latency distribution (usec)')
-        self._print_frequency_distribution([io_rq.duration for io_rq in
-                                            self._analysis.sync_io_requests if
-                                            self._filter_io_request(io_rq)],
-                                           'Sync latency distribution (usec)')
-
-    # I/O latency top and log output methods
-    def _output_io_request(self, io_rq):
-        fmt = '{:<40} {:<16} {:>16} {:>11}  {:<24} {:<8} {:<14}'
-
-        begin_time = common.ns_to_hour_nsec(io_rq.begin_ts,
-                                            self._arg_multi_day,
-                                            self._arg_gmt)
-        end_time = common.ns_to_hour_nsec(io_rq.end_ts,
-                                          self._arg_multi_day,
-                                          self._arg_gmt)
-        time_range_str = '[' + begin_time + ',' + end_time + ']'
-        duration_str = '%0.03f' % (io_rq.duration / 1000)
-
+    def _append_log_row(self, io_rq, result_table):
         if io_rq.size is None:
-            size = 'N/A'
+            size = mi.Empty()
         else:
-            size = common.convert_size(io_rq.size)
+            size = mi.Size(io_rq.size)
 
         tid = io_rq.tid
         proc_stats = self._analysis.tids[tid]
-        comm = proc_stats.comm
+        proc_name = proc_stats.comm
 
         # TODO: handle fd_in/fd_out for RW type operations
         if io_rq.fd is None:
-            file_str = 'N/A'
+            path = mi.Empty()
+            fd = mi.Empty()
         else:
-            fd = io_rq.fd
-
+            fd = mi.Fd(io_rq.fd)
             parent_proc = proc_stats
+
             if parent_proc.pid is not None:
                 parent_proc = self._analysis.tids[parent_proc.pid]
 
-            fd_stats = parent_proc.get_fd(fd, io_rq.end_ts)
+            fd_stats = parent_proc.get_fd(io_rq.fd, io_rq.end_ts)
+
             if fd_stats is not None:
-                filename = fd_stats.filename
+                path = mi.Path(fd_stats.filename)
             else:
-                filename = 'unknown'
+                path = mi.Unknown()
 
-            file_str = '%s (fd=%s)' % (filename, fd)
+        result_table.append_row(
+            time_range=mi.TimeRange(io_rq.begin_ts, io_rq.end_ts),
+            out_of_range=mi.Boolean(self._is_io_rq_out_of_range(io_rq)),
+            duration=mi.Duration(io_rq.duration),
+            syscall=mi.Syscall(io_rq.syscall_name),
+            size=size,
+            process=mi.Process(proc_name, tid=tid),
+            path=path,
+            fd=fd,
+        )
 
-        if self._is_io_rq_out_of_range(io_rq):
+    def _fill_log_result_table(self, rq_list, sort_key, is_top, result_table):
+        if not rq_list:
+            return
+
+        count = 0
+
+        for io_rq in sorted(rq_list, key=operator.attrgetter(sort_key),
+                            reverse=is_top):
+            if is_top and count > self._args.limit:
+                break
+
+            self._append_log_row(io_rq, result_table)
+            count += 1
+
+    def _fill_log_result_table_from_io_requests(self, io_requests, sort_key,
+                                                is_top, result_table):
+        io_requests = [io_rq for io_rq in io_requests if
+                       self._filter_io_request(io_rq)]
+        self._fill_log_result_table(io_requests, sort_key, is_top,
+                                    result_table)
+
+    def _get_top_result_tables(self, begin, end):
+        open_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_TOP_SYSCALL,
+                                         begin, end, 'open')
+        read_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_TOP_SYSCALL,
+                                         begin, end, 'read')
+        write_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_TOP_SYSCALL,
+                                         begin, end, 'write')
+        sync_table = \
+            self._mi_create_result_table(self._MI_TABLE_CLASS_TOP_SYSCALL,
+                                         begin, end, 'sync')
+        self._fill_log_result_table_from_io_requests(
+            self._analysis.open_io_requests, 'duration', True, open_table)
+        self._fill_log_result_table_from_io_requests(
+            self._analysis.read_io_requests, 'duration', True, read_table)
+        self._fill_log_result_table_from_io_requests(
+            self._analysis.write_io_requests, 'duration', True, write_table)
+        self._fill_log_result_table_from_io_requests(
+            self._analysis.sync_io_requests, 'duration', True, sync_table)
+
+        return [open_table, read_table, write_table, sync_table]
+
+    def _print_log_row(self, row):
+        fmt = '{:<40} {:<16} {:>16} {:>11}  {:<24} {:<8} {:<14}'
+        begin_time = common.ns_to_hour_nsec(row.time_range.begin,
+                                            self._args.multi_day,
+                                            self._args.gmt)
+        end_time = common.ns_to_hour_nsec(row.time_range.end,
+                                          self._args.multi_day,
+                                          self._args.gmt)
+        time_range_str = '[' + begin_time + ',' + end_time + ']'
+        duration_str = '%0.03f' % row.duration.to_us()
+
+        if type(row.size) is mi.Empty:
+            size = 'N/A'
+        else:
+            size = format_utils.format_size(row.size.value)
+
+        tid = row.process.tid
+        proc_name = row.process.name
+
+        if type(row.fd) is mi.Empty:
+            file_str = 'N/A'
+        else:
+            if type(row.path) is mi.Unknown:
+                path = 'unknown'
+            else:
+                path = row.path.path
+
+            file_str = '%s (fd=%s)' % (path, row.fd.fd)
+
+        if row.out_of_range.value:
             time_range_str += '*'
             duration_str += '*'
         else:
             time_range_str += ' '
             duration_str += ' '
 
-        print(fmt.format(time_range_str, io_rq.syscall_name, duration_str,
-                         size, comm, tid, file_str))
+        print(fmt.format(time_range_str, row.syscall.name, duration_str,
+                         size, proc_name, tid, file_str))
 
-    def _output_io_requests_list(self, rq_list, title, sort_key, is_top=False):
-        if not rq_list:
+    def _print_log(self, result_table):
+        if not result_table.rows:
             return
 
-        count = 0
         has_out_of_range_rq = False
 
         print()
-        print(title)
-
+        fmt = '{} {} (usec)'
+        print(fmt.format(result_table.title, result_table.subtitle))
         header_fmt = '{:<19} {:<20} {:<16} {:<23} {:<5} {:<24} {:<8} {:<14}'
         print(header_fmt.format(
             'Begin', 'End', 'Name', 'Duration (usec)', 'Size', 'Proc', 'PID',
             'Filename'))
 
-        for io_rq in sorted(rq_list, key=operator.attrgetter(sort_key),
-                            reverse=is_top):
-            if is_top and count > self._arg_limit:
-                break
+        for row in result_table.rows:
+            self._print_log_row(row)
 
-            self._output_io_request(io_rq)
-            if not has_out_of_range_rq and self._is_io_rq_out_of_range(io_rq):
+            if not has_out_of_range_rq and row.out_of_range.value:
                 has_out_of_range_rq = True
-
-            count += 1
 
         if has_out_of_range_rq:
             print('*: Syscalls started and/or completed outside of the '
                   'range specified')
 
-    def _output_latency_log_from_requests(self, io_requests, title, sort_key,
-                                          is_top=False):
-        io_requests = [io_rq for io_rq in io_requests if
-                       self._filter_io_request(io_rq)]
-        self._output_io_requests_list(io_requests, title, sort_key, is_top)
+    def _print_top(self, top_tables):
+        for table in top_tables:
+            self._print_log(table)
 
-    def iolatency_syscalls_top_output(self):
-        self._output_latency_log_from_requests(
-            [io_rq for io_rq in self._analysis.open_io_requests if
-             self._filter_io_request(io_rq)],
-            'Top open syscall latencies (usec)',
-            'duration', is_top=True)
-        self._output_io_requests_list(
-            [io_rq for io_rq in self._analysis.read_io_requests if
-             self._filter_io_request(io_rq)],
-            'Top read syscall latencies (usec)',
-            'duration', is_top=True)
-        self._output_io_requests_list(
-            [io_rq for io_rq in self._analysis.write_io_requests if
-             self._filter_io_request(io_rq)],
-            'Top write syscall latencies (usec)',
-            'duration', is_top=True)
-        self._output_io_requests_list(
-            [io_rq for io_rq in self._analysis.sync_io_requests if
-             self._filter_io_request(io_rq)],
-            'Top sync syscall latencies (usec)',
-            'duration', is_top=True)
+    def _get_log_result_table(self, begin, end):
+        log_table = self._mi_create_result_table(self._MI_TABLE_CLASS_LOG,
+                                                 begin, end)
+        self._fill_log_result_table_from_io_requests(
+            self._analysis.io_requests, 'begin_ts', False, log_table)
 
-    def iolatency_syscalls_log_output(self):
-        self._output_io_requests_list(
-            self._analysis.io_requests,
-            'Log of all I/O system calls',
-            'begin_ts')
+        return log_table
 
-    # I/O Stats output methods
-    def _output_latency_stats(self, name, rq_count, min_duration, max_duration,
-                              total_duration, rq_durations):
-        if rq_count < 2:
-            stdev = '?'
-        else:
-            stdev = '%0.03f' % (statistics.stdev(rq_durations) / 1000)
-
-        if rq_count > 0:
-            avg = '%0.03f' % (total_duration / (rq_count) / 1000)
-        else:
-            avg = "0.000"
-        min_duration = '%0.03f' % (min_duration / 1000)
-        max_duration = '%0.03f' % (max_duration / 1000)
-
-        print(IoAnalysisCommand._LATENCY_STATS_FORMAT.format(
-            name, rq_count, min_duration, avg, max_duration, stdev))
-
-    def _output_latency_stats_from_requests(self, io_requests, name):
-        rq_durations = [io_rq.duration for io_rq in io_requests if
-                        self._filter_io_request(io_rq)]
+    def _append_latency_stats_row(self, obj, rq_durations, result_table):
         rq_count = len(rq_durations)
+        total_duration = sum(rq_durations)
+
         if len(rq_durations) > 0:
             min_duration = min(rq_durations)
             max_duration = max(rq_durations)
         else:
             min_duration = 0
             max_duration = 0
-        total_duration = sum(rq_durations)
 
-        self._output_latency_stats(name, rq_count, min_duration,
-                                   max_duration, total_duration,
-                                   rq_durations)
+        if rq_count < 2:
+            stdev = mi.Unknown()
+        else:
+            stdev = mi.Duration(statistics.stdev(rq_durations))
 
-    def _output_syscalls_latency_stats(self):
+        if rq_count > 0:
+            avg = total_duration / rq_count
+        else:
+            avg = 0
+
+        result_table.append_row(
+            obj=obj,
+            count=mi.Integer(rq_count),
+            min_latency=mi.Duration(min_duration),
+            avg_latency=mi.Duration(avg),
+            max_latency=mi.Duration(max_duration),
+            stdev_latency=stdev,
+        )
+
+    def _append_latency_stats_row_from_requests(self, obj, io_requests,
+                                                result_table):
+        rq_durations = [io_rq.duration for io_rq in io_requests if
+                        self._filter_io_request(io_rq)]
+        self._append_latency_stats_row(obj, rq_durations, result_table)
+
+    def _get_syscall_latency_stats_result_table(self, begin, end):
+        result_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_SYSCALL_LATENCY_STATS, begin, end)
+        append_fn = self._append_latency_stats_row_from_requests
+        append_fn(mi.String('Open'), self._analysis.open_io_requests,
+                  result_table)
+        append_fn(mi.String('Read'), self._analysis.read_io_requests,
+                  result_table)
+        append_fn(mi.String('Write'), self._analysis.write_io_requests,
+                  result_table)
+        append_fn(mi.String('Sync'), self._analysis.sync_io_requests,
+                  result_table)
+
+        return result_table
+
+    def _get_disk_latency_stats_result_table(self, begin, end):
+        if not self._analysis.disks:
+            return
+
+        result_table = self._mi_create_result_table(
+            self._MI_TABLE_CLASS_PART_LATENCY_STATS, begin, end)
+
+        for disk in self._analysis.disks.values():
+            if disk.rq_count:
+                rq_durations = [rq.duration for rq in disk.rq_list if
+                                self._filter_io_request(rq)]
+                disk = mi.Disk(disk.disk_name)
+                self._append_latency_stats_row(disk, rq_durations,
+                                               result_table)
+
+        return result_table
+
+    def _get_latency_stats_result_tables(self, begin, end):
+        syscall_tbl = self._get_syscall_latency_stats_result_table(begin, end)
+        disk_tbl = self._get_disk_latency_stats_result_table(begin, end)
+
+        return syscall_tbl, disk_tbl
+
+    def _print_latency_stats_row(self, row):
+        if type(row.stdev_latency) is mi.Unknown:
+            stdev = '?'
+        else:
+            stdev = '%0.03f' % row.stdev_latency.to_us()
+
+        avg = '%0.03f' % row.avg_latency.to_us()
+        min_duration = '%0.03f' % row.min_latency.to_us()
+        max_duration = '%0.03f' % row.max_latency.to_us()
+
+        print(IoAnalysisCommand._LATENCY_STATS_FORMAT.format(
+            str(row.obj), row.count.value, min_duration,
+            avg, max_duration, stdev))
+
+    def _print_syscall_latency_stats(self, stats_table):
         print('\nSyscalls latency statistics (usec):')
         print(IoAnalysisCommand._LATENCY_STATS_FORMAT.format(
             'Type', 'Count', 'Min', 'Average', 'Max', 'Stdev'))
         print(IoAnalysisCommand._SECTION_SEPARATOR_STRING)
 
-        self._output_latency_stats_from_requests(
-            self._analysis.open_io_requests, 'Open')
-        self._output_latency_stats_from_requests(
-            self._analysis.read_io_requests, 'Read')
-        self._output_latency_stats_from_requests(
-            self._analysis.write_io_requests, 'Write')
-        self._output_latency_stats_from_requests(
-            self._analysis.sync_io_requests, 'Sync')
+        for row in stats_table.rows:
+            self._print_latency_stats_row(row)
 
-    def _output_disk_latency_stats(self):
-        if not self._analysis.disks:
+    def _print_disk_latency_stats(self, stats_table):
+        if not stats_table.rows:
             return
 
         print('\nDisk latency statistics (usec):')
@@ -685,82 +1087,99 @@ class IoAnalysisCommand(Command):
             'Name', 'Count', 'Min', 'Average', 'Max', 'Stdev'))
         print(IoAnalysisCommand._SECTION_SEPARATOR_STRING)
 
-        for disk in self._analysis.disks.values():
-            if disk.rq_count:
-                rq_durations = [rq.duration for rq in disk.rq_list]
-                self._output_latency_stats(disk.disk_name,
-                                           disk.rq_count,
-                                           disk.min_rq_duration,
-                                           disk.max_rq_duration,
-                                           disk.total_rq_duration,
-                                           rq_durations)
+        for row in stats_table.rows:
+            self._print_latency_stats_row(row)
 
-    def iostats_output(self):
-        self._output_syscalls_latency_stats()
-        self._output_disk_latency_stats()
-
-    def _print_results(self, begin_ns, end_ns):
-        self._print_date(begin_ns, end_ns)
-        if self._arg_usage:
-            self.iotop_output()
-        if self._arg_stats:
-            self.iostats_output()
-        if self._arg_latencytop:
-            self.iolatency_syscalls_top_output()
-        if self._arg_freq:
-            self.iolatency_syscalls_output()
-            self.iolatency_output()
-        if self._arg_log:
-            self.iolatency_syscalls_log_output()
-
-    def _reset_total(self, start_ts):
-        self._analysis.reset()
+    def _print_latency_stats(self, syscall_latency_stats_table,
+                             disk_latency_stats_table):
+        self._print_syscall_latency_stats(syscall_latency_stats_table)
+        self._print_disk_latency_stats(disk_latency_stats_table)
 
     def _add_arguments(self, ap):
+        Command._add_proc_filter_args(ap)
+        Command._add_min_max_args(ap)
+        Command._add_log_args(
+            ap, help='Output the I/O requests in chronological order')
+        Command._add_top_args(
+            ap, help='Output the top I/O latencies by category')
+        Command._add_stats_args(ap, help='Output the I/O latency statistics')
+        Command._add_freq_args(
+            ap, help='Output the I/O latency frequency distribution')
         ap.add_argument('--usage', action='store_true',
-                        help='Show the I/O usage')
-        ap.add_argument('--latencystats', action='store_true',
-                        help='Show the I/O latency statistics')
-        ap.add_argument('--latencytop', action='store_true',
-                        help='Show the I/O latency top')
-        ap.add_argument('--latencyfreq', action='store_true',
-                        help='Show the I/O latency frequency distribution')
-        ap.add_argument('--freq-resolution', type=int, default=20,
-                        help='Frequency distribution resolution '
-                             '(default 20)')
+                        help='Output the I/O usage')
+        ap.add_argument('--minsize', type=float,
+                        help='Filter out, I/O operations working with '
+                        'less that minsize bytes')
+        ap.add_argument('--maxsize', type=float,
+                        help='Filter out, I/O operations working with '
+                        'more that maxsize bytes')
 
 
-# entry point
+def _run(mi_mode):
+    iocmd = IoAnalysisCommand(mi_mode=mi_mode)
+    iocmd.run()
+
+
+def _runstats(mi_mode):
+    sys.argv.insert(1, '--stats')
+    _run(mi_mode)
+
+
+def _runlog(mi_mode):
+    sys.argv.insert(1, '--log')
+    _run(mi_mode)
+
+
+def _runfreq(mi_mode):
+    sys.argv.insert(1, '--freq')
+    _run(mi_mode)
+
+
+def _runlatencytop(mi_mode):
+    sys.argv.insert(1, '--top')
+    _run(mi_mode)
+
+
+def _runusage(mi_mode):
+    sys.argv.insert(1, '--usage')
+    _run(mi_mode)
+
+
 def runstats():
-    # create command
-    iocmd = IoAnalysisCommand()
-    # execute command
-    iocmd.run_stats()
-
-
-def runlatencytop():
-    # create command
-    iocmd = IoAnalysisCommand()
-    # execute command
-    iocmd.run_latencytop()
+    _runstats(mi_mode=False)
 
 
 def runlog():
-    # create command
-    iocmd = IoAnalysisCommand()
-    # execute command
-    iocmd.run_log()
+    _runlog(mi_mode=False)
 
 
 def runfreq():
-    # create command
-    iocmd = IoAnalysisCommand()
-    # execute command
-    iocmd.run_freq()
+    _runfreq(mi_mode=False)
+
+
+def runlatencytop():
+    _runlatencytop(mi_mode=False)
 
 
 def runusage():
-    # create command
-    iocmd = IoAnalysisCommand()
-    # execute command
-    iocmd.run_usage()
+    _runusage(mi_mode=False)
+
+
+def runstats_mi():
+    _runstats(mi_mode=True)
+
+
+def runlog_mi():
+    _runlog(mi_mode=True)
+
+
+def runfreq_mi():
+    _runfreq(mi_mode=True)
+
+
+def runlatencytop_mi():
+    _runlatencytop(mi_mode=True)
+
+
+def runusage_mi():
+    _runusage(mi_mode=True)

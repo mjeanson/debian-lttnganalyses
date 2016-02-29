@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-#
 # The MIT License (MIT)
 #
 # Copyright (C) 2015 - Antoine Busque <abusque@efficios.com>
@@ -26,31 +24,21 @@ from .analysis import Analysis
 
 
 class IrqAnalysis(Analysis):
-    def __init__(self, state, min_duration, max_duration):
+    def __init__(self, state, conf):
         notification_cbs = {
             'irq_handler_entry': self._process_irq_handler_entry,
             'irq_handler_exit': self._process_irq_handler_exit,
             'softirq_exit': self._process_softirq_exit
         }
 
-        self._state = state
+        super().__init__(state, conf)
         self._state.register_notification_cbs(notification_cbs)
-        self._min_duration = min_duration
-        self._max_duration = max_duration
-        # µs to ns
-        if self._min_duration is not None:
-            self._min_duration *= 1000
-        if self._max_duration is not None:
-            self._max_duration *= 1000
 
         # Indexed by irq 'id' (irq or vec)
         self.hard_irq_stats = {}
         self.softirq_stats = {}
         # Log of individual interrupts
         self.irq_list = []
-
-    def process_event(self, ev):
-        pass
 
     def reset(self):
         self.irq_list = []
@@ -64,16 +52,20 @@ class IrqAnalysis(Analysis):
         name = kwargs['irq_name']
         if id not in self.hard_irq_stats:
             self.hard_irq_stats[id] = HardIrqStats(name)
-        elif self.hard_irq_stats[id].name != name:
-            self.hard_irq_stats[id].name = name
+        elif name not in self.hard_irq_stats[id].names:
+            self.hard_irq_stats[id].names.append(name)
 
     def _process_irq_handler_exit(self, **kwargs):
         irq = kwargs['hard_irq']
 
-        duration = irq.end_ts - irq.begin_ts
-        if self._min_duration is not None and duration < self._min_duration:
+        if not self._filter_cpu(irq.cpu_id):
             return
-        if self._max_duration is not None and duration > self._max_duration:
+
+        if self._conf.min_duration is not None and \
+           irq.duration < self._conf.min_duration:
+            return
+        if self._conf.max_duration is not None and \
+           irq.duration > self._conf.max_duration:
             return
 
         self.irq_list.append(irq)
@@ -85,10 +77,14 @@ class IrqAnalysis(Analysis):
     def _process_softirq_exit(self, **kwargs):
         irq = kwargs['softirq']
 
-        duration = irq.end_ts - irq.begin_ts
-        if self._min_duration is not None and duration < self._min_duration:
+        if not self._filter_cpu(irq.cpu_id):
             return
-        if self._max_duration is not None and duration > self._max_duration:
+
+        if self._conf.min_duration is not None and \
+           irq.duration < self._conf.min_duration:
+            return
+        if self._conf.max_duration is not None and \
+           irq.duration > self._conf.max_duration:
             return
 
         self.irq_list.append(irq)
@@ -101,26 +97,28 @@ class IrqAnalysis(Analysis):
 
 class IrqStats():
     def __init__(self, name):
-        self.name = name
+        self._name = name
         self.min_duration = None
         self.max_duration = None
         self.total_duration = 0
         self.irq_list = []
 
     @property
+    def name(self):
+        return self._name
+
+    @property
     def count(self):
         return len(self.irq_list)
 
     def update_stats(self, irq):
-        duration = irq.end_ts - irq.begin_ts
+        if self.min_duration is None or irq.duration < self.min_duration:
+            self.min_duration = irq.duration
 
-        if self.min_duration is None or duration < self.min_duration:
-            self.min_duration = duration
+        if self.max_duration is None or irq.duration > self.max_duration:
+            self.max_duration = irq.duration
 
-        if self.max_duration is None or duration > self.max_duration:
-            self.max_duration = duration
-
-        self.total_duration += duration
+        self.total_duration += irq.duration
         self.irq_list.append(irq)
 
     def reset(self):
@@ -131,8 +129,15 @@ class IrqStats():
 
 
 class HardIrqStats(IrqStats):
+    NAMES_SEPARATOR = ', '
+
     def __init__(self, name='unknown'):
         super().__init__(name)
+        self.names = [name]
+
+    @property
+    def name(self):
+        return self.NAMES_SEPARATOR.join(self.names)
 
 
 class SoftIrqStats(IrqStats):
