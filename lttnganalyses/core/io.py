@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-#
 # The MIT License (MIT)
 #
 # Copyright (C) 2015 - Antoine Busque <abusque@efficios.com>
@@ -22,12 +20,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from . import stats
 from .analysis import Analysis
 from ..linuxautomaton import sv
 
 
 class IoAnalysis(Analysis):
-    def __init__(self, state):
+    def __init__(self, state, conf):
         notification_cbs = {
             'net_dev_xmit': self._process_net_dev_xmit,
             'netif_receive_skb': self._process_netif_receive_skb,
@@ -35,6 +34,7 @@ class IoAnalysis(Analysis):
             'io_rq_exit': self._process_io_rq_exit,
             'create_fd': self._process_create_fd,
             'close_fd': self._process_close_fd,
+            'update_fd': self._process_update_fd,
             'create_parent_proc': self._process_create_parent_proc
         }
 
@@ -43,7 +43,7 @@ class IoAnalysis(Analysis):
             self._process_lttng_statedump_block_device
         }
 
-        self._state = state
+        super().__init__(state, conf)
         self._state.register_notification_cbs(notification_cbs)
         self._register_cbs(event_cbs)
 
@@ -52,6 +52,7 @@ class IoAnalysis(Analysis):
         self.tids = {}
 
     def process_event(self, ev):
+        super().process_event(ev)
         self._process_event_cb(ev)
 
     def reset(self):
@@ -115,32 +116,20 @@ class IoAnalysis(Analysis):
                                                         io_rq.operation):
                     yield io_rq
 
-    def get_files_stats(self, pid_filter_list, comm_filter_list):
+    def get_files_stats(self):
         files_stats = {}
 
         for proc_stats in self.tids.values():
-            if pid_filter_list is not None and \
-                    proc_stats.pid not in pid_filter_list or \
-                    comm_filter_list is not None and \
-                    proc_stats.comm not in comm_filter_list:
-                continue
-
             for fd_list in proc_stats.fds.values():
                 for fd_stats in fd_list:
                     filename = fd_stats.filename
                     # Add process name to generic filenames to
                     # distinguish them
                     if FileStats.is_generic_name(filename):
-                        filename += '(%s)' % proc_stats.comm
+                        filename += ' (%s)' % proc_stats.comm
 
                     if filename not in files_stats:
-                        if proc_stats.pid is not None:
-                            pid = proc_stats.pid
-                        else:
-                            pid = proc_stats.tid
-
-                        files_stats[filename] = FileStats(
-                            filename, fd_stats.fd, pid)
+                        files_stats[filename] = FileStats(filename)
 
                     files_stats[filename].update_stats(fd_stats, proc_stats)
 
@@ -164,6 +153,10 @@ class IoAnalysis(Analysis):
     def _process_net_dev_xmit(self, **kwargs):
         name = kwargs['iface_name']
         sent_bytes = kwargs['sent_bytes']
+        cpu = kwargs['cpu_id']
+
+        if not self._filter_cpu(cpu):
+            return
 
         if name not in self.ifaces:
             self.ifaces[name] = IfaceStats(name)
@@ -174,6 +167,10 @@ class IoAnalysis(Analysis):
     def _process_netif_receive_skb(self, **kwargs):
         name = kwargs['iface_name']
         recv_bytes = kwargs['recv_bytes']
+        cpu = kwargs['cpu_id']
+
+        if not self._filter_cpu(cpu):
+            return
 
         if name not in self.ifaces:
             self.ifaces[name] = IfaceStats(name)
@@ -184,16 +181,23 @@ class IoAnalysis(Analysis):
     def _process_block_rq_complete(self, **kwargs):
         req = kwargs['req']
         proc = kwargs['proc']
+        cpu = kwargs['cpu_id']
+
+        if not self._filter_process(proc):
+            return
+        if not self._filter_cpu(cpu):
+            return
 
         if req.dev not in self.disks:
             self.disks[req.dev] = DiskStats(req.dev)
 
         self.disks[req.dev].update_stats(req)
 
-        if proc.tid not in self.tids:
-            self.tids[proc.tid] = ProcessIOStats.new_from_process(proc)
+        if proc is not None:
+            if proc.tid not in self.tids:
+                self.tids[proc.tid] = ProcessIOStats.new_from_process(proc)
 
-        self.tids[proc.tid].update_block_stats(req)
+            self.tids[proc.tid].update_block_stats(req)
 
     def _process_lttng_statedump_block_device(self, event):
         dev = event['dev']
@@ -208,6 +212,12 @@ class IoAnalysis(Analysis):
         proc = kwargs['proc']
         parent_proc = kwargs['parent_proc']
         io_rq = kwargs['io_rq']
+        cpu = kwargs['cpu_id']
+
+        if not self._filter_process(parent_proc):
+            return
+        if not self._filter_cpu(cpu):
+            return
 
         if proc.tid not in self.tids:
             self.tids[proc.tid] = ProcessIOStats.new_from_process(proc)
@@ -231,9 +241,19 @@ class IoAnalysis(Analysis):
         proc_stats.update_io_stats(io_rq, fd_types)
         parent_stats.update_fd_stats(io_rq)
 
+        # Check if the proc stats comm corresponds to the actual
+        # process comm. It might be that it was missing so far.
+        if proc_stats.comm != proc.comm:
+            proc_stats.comm = proc.comm
+        if parent_stats.comm != parent_proc.comm:
+            parent_stats.comm = parent_proc.comm
+
     def _process_create_parent_proc(self, **kwargs):
         proc = kwargs['proc']
         parent_proc = kwargs['parent_proc']
+
+        if not self._filter_process(parent_proc):
+            return
 
         if proc.tid not in self.tids:
             self.tids[proc.tid] = ProcessIOStats.new_from_process(proc)
@@ -252,7 +272,13 @@ class IoAnalysis(Analysis):
         timestamp = kwargs['timestamp']
         parent_proc = kwargs['parent_proc']
         tid = parent_proc.tid
+        cpu = kwargs['cpu_id']
         fd = kwargs['fd']
+
+        if not self._filter_process(parent_proc):
+            return
+        if not self._filter_cpu(cpu):
+            return
 
         if tid not in self.tids:
             self.tids[tid] = ProcessIOStats.new_from_process(parent_proc)
@@ -267,11 +293,26 @@ class IoAnalysis(Analysis):
         timestamp = kwargs['timestamp']
         parent_proc = kwargs['parent_proc']
         tid = parent_proc.tid
+        cpu = kwargs['cpu_id']
         fd = kwargs['fd']
+
+        if not self._filter_process(parent_proc):
+            return
+        if not self._filter_cpu(cpu):
+            return
 
         parent_stats = self.tids[tid]
         last_fd = parent_stats.get_fd(fd)
         last_fd.close_ts = timestamp
+
+    def _process_update_fd(self, **kwargs):
+        parent_proc = kwargs['parent_proc']
+        tid = parent_proc.tid
+        fd = kwargs['fd']
+
+        new_filename = parent_proc.fds[fd].filename
+        fd_list = self.tids[tid].fds[fd]
+        fd_list[-1].filename = new_filename
 
 
 class DiskStats():
@@ -336,22 +377,13 @@ class IfaceStats():
         self.sent_packets = 0
 
 
-class ProcessIOStats():
+class ProcessIOStats(stats.Process):
     def __init__(self, pid, tid, comm):
-        self.pid = pid
-        self.tid = tid
-        self.comm = comm
-        # Number of bytes read or written by the process, by type of I/O
-        self.disk_read = 0
-        self.disk_write = 0
-        self.net_read = 0
-        self.net_write = 0
-        self.unk_read = 0
-        self.unk_write = 0
-        # Actual number of bytes read or written by the process at the
-        # block layer
-        self.block_read = 0
-        self.block_write = 0
+        super().__init__(pid, tid, comm)
+        self.disk_io = stats.IO()
+        self.net_io = stats.IO()
+        self.unk_io = stats.IO()
+        self.block_io = stats.IO()
         # FDStats objects, indexed by fd (fileno)
         self.fds = {}
         self.rq_list = []
@@ -363,11 +395,11 @@ class ProcessIOStats():
     # Total read/write does not account for block layer I/O
     @property
     def total_read(self):
-        return self.disk_read + self.net_read + self.unk_read
+        return self.disk_io.read + self.net_io.read + self.unk_io.read
 
     @property
     def total_write(self):
-        return self.disk_write + self.net_write + self.unk_write
+        return self.disk_io.write + self.net_io.write + self.unk_io.write
 
     def update_fd_stats(self, req):
         if req.errno is not None:
@@ -386,9 +418,9 @@ class ProcessIOStats():
         self.rq_list.append(req)
 
         if req.operation is sv.IORequest.OP_READ:
-            self.block_read += req.size
+            self.block_io.read += req.size
         elif req.operation is sv.IORequest.OP_WRITE:
-            self.block_write += req.size
+            self.block_io.write += req.size
 
     def update_io_stats(self, req, fd_types):
         self.rq_list.append(req)
@@ -404,23 +436,21 @@ class ProcessIOStats():
             self._update_read(req.returned_size, fd_types['fd_in'])
             self._update_write(req.returned_size, fd_types['fd_out'])
 
-        self.rq_list.append(req)
-
     def _update_read(self, size, fd_type):
         if fd_type == sv.FDType.disk:
-            self.disk_read += size
+            self.disk_io.read += size
         elif fd_type == sv.FDType.net or fd_type == sv.FDType.maybe_net:
-            self.net_read += size
+            self.net_io.read += size
         else:
-            self.unk_read += size
+            self.unk_io.read += size
 
     def _update_write(self, size, fd_type):
         if fd_type == sv.FDType.disk:
-            self.disk_write += size
+            self.disk_io.write += size
         elif fd_type == sv.FDType.net or fd_type == sv.FDType.maybe_net:
-            self.net_write += size
+            self.net_io.write += size
         else:
-            self.unk_write += size
+            self.unk_io.write += size
 
     def _get_current_fd(self, fd):
         fd_stats = self.fds[fd][-1]
@@ -484,14 +514,10 @@ class ProcessIOStats():
         return fd_stats
 
     def reset(self):
-        self.disk_read = 0
-        self.disk_write = 0
-        self.net_read = 0
-        self.net_write = 0
-        self.unk_read = 0
-        self.unk_write = 0
-        self.block_read = 0
-        self.block_write = 0
+        self.disk_io.reset()
+        self.net_io.reset()
+        self.unk_io.reset()
+        self.block_io.reset()
         self.rq_list = []
 
         for fd in self.fds:
@@ -509,10 +535,7 @@ class FDStats():
         self.family = family
         self.open_ts = open_ts
         self.close_ts = None
-
-        # Number of bytes read or written
-        self.read = 0
-        self.write = 0
+        self.io = stats.IO()
         # IO Requests that acted upon the FD
         self.rq_list = []
 
@@ -523,38 +546,35 @@ class FDStats():
 
     def update_stats(self, req):
         if req.operation is sv.IORequest.OP_READ:
-            self.read += req.returned_size
+            self.io.read += req.returned_size
         elif req.operation is sv.IORequest.OP_WRITE:
-            self.write += req.returned_size
+            self.io.write += req.returned_size
         elif req.operation is sv.IORequest.OP_READ_WRITE:
             if self.fd == req.fd_in:
-                self.read += req.returned_size
+                self.io.read += req.returned_size
             elif self.fd == req.fd_out:
-                self.write += req.returned_size
+                self.io.write += req.returned_size
 
         self.rq_list.append(req)
 
     def reset(self):
-        self.read = 0
-        self.write = 0
+        self.io.reset()
         self.rq_list = []
 
 
 class FileStats():
     GENERIC_NAMES = ['pipe', 'socket', 'anon_inode', 'unknown']
 
-    def __init__(self, filename, fd, pid):
+    def __init__(self, filename):
         self.filename = filename
-        # Number of bytes read or written
-        self.read = 0
-        self.write = 0
+        self.io = stats.IO()
         # Dict of file descriptors representing this file, indexed by
         # parent pid
-        self.fd_by_pid = {pid: fd}
+        # FIXME this doesn't cover FD reuse cases
+        self.fd_by_pid = {}
 
     def update_stats(self, fd_stats, proc_stats):
-        self.read += fd_stats.read
-        self.write += fd_stats.write
+        self.io += fd_stats.io
 
         if proc_stats.pid is not None:
             pid = proc_stats.pid
@@ -565,8 +585,7 @@ class FileStats():
             self.fd_by_pid[pid] = fd_stats.fd
 
     def reset(self):
-        self.read = 0
-        self.write = 0
+        self.io.reset()
 
     @staticmethod
     def is_generic_name(filename):
