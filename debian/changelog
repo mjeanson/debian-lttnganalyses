@@ -1,3 +1,13 @@
+lttnganalyses (0.4.2-1) unstable; urgency=medium
+
+  * [346d503] Added Jon Bernard to uploaders
+  * [de75a88] New upstream version 0.4.2
+  * [675cf02] Update manpages for 0.4.2
+  * [3acef35] Bump standards version to 3.9.7, no changes necessary
+  * [319b479] Update vcs fields to use secure uri
+
+ -- Michael Jeanson <mjeanson@ubuntu.com>  Tue, 01 Mar 2016 11:55:33 -0500
+
 lttnganalyses (0.3.0-2) unstable; urgency=medium
 
   * Rebuild against python 3.5. Closes: #798244
