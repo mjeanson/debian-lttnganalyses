@@ -1,3 +1,10 @@
+lttnganalyses (0.4.2-2) unstable; urgency=medium
+
+  * [738a60e] Added homepage to control
+  * [7daee63] Reworked copyright file
+
+ -- Michael Jeanson <mjeanson@ubuntu.com>  Wed, 02 Mar 2016 12:19:09 -0500
+
 lttnganalyses (0.4.2-1) unstable; urgency=medium
 
   * [346d503] Added Jon Bernard to uploaders
