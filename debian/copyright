@@ -1,18 +1,81 @@
-Format: http://dep.debian.net/deps/dep5
+Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: lttng-analyses
 Source: https://github.com/lttng/lttng-analyses
 
 Files: *
 Copyright: 2015 Julien Desfossez <jdesfossez@efficios.com>
-           2015 Antoine Busque <abusque@efficios.com>
-License: MIT
-
-Files: lttnganalyses/ascii_graph/__init__.py
-Copyright: 2012 Pierre-Francois Carpentier <carpentier.pf@gmail.com>
 License: MIT
 
 Files: debian/*
-Copyright:  2015 Michael Jeanson <mjeanson@efficios.com>
+Copyright: 2015, 2016 Michael Jeanson <mjeanson@ubuntu.com>
+License: MIT
+
+Files: lttng-schedfreq
+Copyright: 2015 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses.egg-info/*
+Copyright: 2015, 2016 Julien Desfossez <jdesfossez@efficios.com>
+           2015, 2016 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/*
+Copyright: 2015, 2016 Julien Desfossez <jdesfossez@efficios.com>
+           2015, 2016 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/cli/*
+Copyright: 2015 Philippe Proulx <pproulx@efficios.com>
+           2015 Julien Desfossez <jdesfossez@efficios.com>
+           2015 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/cli/mi.py
+Copyright: 2015 Philippe Proulx <pproulx@efficios.com>
+License: MIT
+
+Files: lttnganalyses/cli/sched.py
+Copyright: 2015 Julien Desfossez <jdesfossez@efficios.com>
+           2015 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/cli/termgraph.py
+Copyright: 2016 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/common/*
+Copyright: 2015 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/common/format_utils.py
+Copyright: 2016 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/core/*
+Copyright: 2015 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/core/cputop.py
+  lttnganalyses/core/sched.py
+Copyright: 2015 Julien Desfossez <jdesfossez@efficios.com>
+           2015 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: lttnganalyses/linuxautomaton/*
+Copyright: 2015 Julien Desfossez <jdesfossez@efficios.com>
+           2015 Antoine Busque <abusque@efficios.com>
+License: MIT
+
+Files: setup.py
+Copyright: 2015 Michael Jeanson <mjeanson@efficios.com>
+License: MIT
+
+Files: tests/*
+Copyright: 2016 Julien Desfossez <jdesfossez@efficios.com>
+License: MIT
+
+Files: tests/__init__.py
+Copyright: 2016 Antoine Busque <abusque@efficios.com>
 License: MIT
 
 License: MIT
