@@ -1,3 +1,5 @@
+ChangeLog
+LICENSE
 MANIFEST.in
 README.rst
 lttng-analyses-record
@@ -17,6 +19,7 @@ lttng-schedstats
 lttng-schedtop
 lttng-syscallstats
 lttng-track-process
+mit-license.txt
 setup.cfg
 setup.py
 versioneer.py
