@@ -1,3 +1,9 @@
+lttnganalyses (0.4.3-1) unstable; urgency=medium
+
+  * [c9f34a4] New upstream version 0.4.3
+
+ -- Michael Jeanson <mjeanson@ubuntu.com>  Tue, 08 Mar 2016 10:28:30 -0500
+
 lttnganalyses (0.4.2-2) unstable; urgency=medium
 
   * [738a60e] Added homepage to control
