@@ -4,7 +4,7 @@ Uploaders: Jon Bernard <jbernard@debian.org>
 Section: python
 Priority: optional
 Build-Depends: python3-setuptools, python3-all (>= 3.4), debhelper (>= 9),
- python3-babeltrace (>= 1.2)
+ python3-babeltrace (>= 1.2~), babeltrace (>= 1.2~)
 Standards-Version: 3.9.7
 X-Python3-Version: >= 3.4
 Vcs-Git: https://anonscm.debian.org/git/collab-maint/lttnganalyses.git
@@ -13,7 +13,8 @@ Homepage: https://github.com/lttng/lttng-analyses
 
 Package: python3-lttnganalyses
 Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends}, python3-babeltrace (>= 1.2)
+Depends: ${misc:Depends}, ${python3:Depends}, python3-babeltrace (>= 1.2~),
+ babeltrace (>= 1.2~)
 Recommends: python3-progressbar
 Description: LTTng 2.0 trace analysis tools (Python 3)
  The LTTng project aims at providing highly efficient tracing tools for Linux.
