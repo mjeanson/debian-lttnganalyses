@@ -14,6 +14,7 @@ Homepage: https://github.com/lttng/lttng-analyses
 Package: python3-lttnganalyses
 Architecture: all
 Depends: ${misc:Depends}, ${python3:Depends}, python3-babeltrace (>= 1.2)
+Recommends: python3-progressbar
 Description: LTTng 2.0 trace analysis tools (Python 3)
  The LTTng project aims at providing highly efficient tracing tools for Linux.
  Its tracers help tracking down performance issues and debugging problems
