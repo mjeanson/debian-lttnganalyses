@@ -1,3 +1,13 @@
+lttnganalyses (0.5.1-1) unstable; urgency=medium
+
+  * [ddc2e61] New upstream version 0.5.1
+  * [394be70] Add recommends python3-progressbar
+  * [71e3d90] Add babeltrace binary to builddeps and deps
+  * [e93b211] Bump standards to 0.9.8, no changes necessary
+  * [02625ce] Update man pages for 0.5.1
+
+ -- Michael Jeanson <mjeanson@ubuntu.com>  Wed, 01 Jun 2016 15:23:27 -0400
+
 lttnganalyses (0.4.3-1) unstable; urgency=medium
 
   * [c9f34a4] New upstream version 0.4.3
