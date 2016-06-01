@@ -26,12 +26,10 @@ import math
 import operator
 import statistics
 import collections
-from . import mi
-from . import termgraph
+from . import mi, termgraph
 from ..core import sched
 from .command import Command
 from ..common import format_utils
-from ..linuxautomaton import common
 
 
 _SchedStats = collections.namedtuple('_SchedStats', [
@@ -65,8 +63,8 @@ class SchedAnalysisCommand(Command):
                 ('wakeup_ts', 'Wakeup timestamp', mi.Timestamp),
                 ('switch_ts', 'Switch timestamp', mi.Timestamp),
                 ('latency', 'Scheduling latency', mi.Duration),
-                ('prio', 'Priority', mi.Integer),
-                ('target_cpu', 'Target CPU', mi.Integer),
+                ('prio', 'Priority', mi.Number),
+                ('target_cpu', 'Target CPU', mi.Cpu),
                 ('wakee_proc', 'Wakee process', mi.Process),
                 ('waker_proc', 'Waker process', mi.Process),
             ]
@@ -77,8 +75,8 @@ class SchedAnalysisCommand(Command):
                 ('wakeup_ts', 'Wakeup timestamp', mi.Timestamp),
                 ('switch_ts', 'Switch timestamp', mi.Timestamp),
                 ('latency', 'Scheduling latency', mi.Duration),
-                ('prio', 'Priority', mi.Integer),
-                ('target_cpu', 'Target CPU', mi.Integer),
+                ('prio', 'Priority', mi.Number),
+                ('target_cpu', 'Target CPU', mi.Cpu),
                 ('wakee_proc', 'Wakee process', mi.Process),
                 ('waker_proc', 'Waker process', mi.Process),
             ]
@@ -86,7 +84,7 @@ class SchedAnalysisCommand(Command):
         (
             _MI_TABLE_CLASS_TOTAL_STATS,
             'Scheduling latency stats (total)', [
-                ('count', 'Scheduling count', mi.Integer, 'schedulings'),
+                ('count', 'Scheduling count', mi.Number, 'schedulings'),
                 ('min_latency', 'Minimum latency', mi.Duration),
                 ('avg_latency', 'Average latency', mi.Duration),
                 ('max_latency', 'Maximum latency', mi.Duration),
@@ -98,7 +96,7 @@ class SchedAnalysisCommand(Command):
             _MI_TABLE_CLASS_PER_TID_STATS,
             'Scheduling latency stats (per-TID)', [
                 ('process', 'Wakee process', mi.Process),
-                ('count', 'Scheduling count', mi.Integer, 'schedulings'),
+                ('count', 'Scheduling count', mi.Number, 'schedulings'),
                 ('min_latency', 'Minimum latency', mi.Duration),
                 ('avg_latency', 'Average latency', mi.Duration),
                 ('max_latency', 'Maximum latency', mi.Duration),
@@ -110,8 +108,8 @@ class SchedAnalysisCommand(Command):
         (
             _MI_TABLE_CLASS_PER_PRIO_STATS,
             'Scheduling latency stats (per-prio)', [
-                ('prio', 'Priority', mi.Integer),
-                ('count', 'Scheduling count', mi.Integer, 'schedulings'),
+                ('prio', 'Priority', mi.Number),
+                ('count', 'Scheduling count', mi.Number, 'schedulings'),
                 ('min_latency', 'Minimum latency', mi.Duration),
                 ('avg_latency', 'Average latency', mi.Duration),
                 ('max_latency', 'Maximum latency', mi.Duration),
@@ -124,7 +122,7 @@ class SchedAnalysisCommand(Command):
             'Scheduling latency frequency distribution', [
                 ('duration_lower', 'Duration (lower bound)', mi.Duration),
                 ('duration_upper', 'Duration (upper bound)', mi.Duration),
-                ('count', 'Scheduling count', mi.Integer, 'schedulings'),
+                ('count', 'Scheduling count', mi.Number, 'schedulings'),
             ]
         ),
     ]
@@ -331,8 +329,8 @@ class SchedAnalysisCommand(Command):
                 wakeup_ts=mi.Timestamp(sched_event.wakeup_ts),
                 switch_ts=mi.Timestamp(sched_event.switch_ts),
                 latency=mi.Duration(sched_event.latency),
-                prio=mi.Integer(sched_event.prio),
-                target_cpu=mi.Integer(sched_event.target_cpu),
+                prio=mi.Number(sched_event.prio),
+                target_cpu=mi.Cpu(sched_event.target_cpu),
                 wakee_proc=wakee_proc,
                 waker_proc=waker_proc,
             )
@@ -364,8 +362,8 @@ class SchedAnalysisCommand(Command):
                 wakeup_ts=mi.Timestamp(sched_event.wakeup_ts),
                 switch_ts=mi.Timestamp(sched_event.switch_ts),
                 latency=mi.Duration(sched_event.latency),
-                prio=mi.Integer(sched_event.prio),
-                target_cpu=mi.Integer(sched_event.target_cpu),
+                prio=mi.Number(sched_event.prio),
+                target_cpu=mi.Cpu(sched_event.target_cpu),
                 wakee_proc=wakee_proc,
                 waker_proc=waker_proc,
             )
@@ -384,7 +382,7 @@ class SchedAnalysisCommand(Command):
             stdev = mi.Duration(stdev)
 
         stats_table.append_row(
-            count=mi.Integer(self._analysis.count),
+            count=mi.Number(self._analysis.count),
             min_latency=mi.Duration(self._analysis.min_latency),
             avg_latency=mi.Duration(self._analysis.total_latency /
                                     self._analysis.count),
@@ -416,7 +414,7 @@ class SchedAnalysisCommand(Command):
 
             stats_table.append_row(
                 process=mi.Process(tid=tid_stats.tid, name=tid_stats.comm),
-                count=mi.Integer(tid_stats.count),
+                count=mi.Number(tid_stats.count),
                 min_latency=mi.Duration(tid_stats.min_latency),
                 avg_latency=mi.Duration(tid_stats.total_latency /
                                         tid_stats.count),
@@ -449,8 +447,8 @@ class SchedAnalysisCommand(Command):
             total_latency = stats.total
 
             stats_table.append_row(
-                prio=mi.Integer(prio),
-                count=mi.Integer(count),
+                prio=mi.Number(prio),
+                count=mi.Number(count),
                 min_latency=mi.Duration(min_latency),
                 avg_latency=mi.Duration(total_latency / count),
                 max_latency=mi.Duration(max_latency),
@@ -472,14 +470,14 @@ class SchedAnalysisCommand(Command):
             column_infos.append((
                 'tid{}'.format(index),
                 freq_table.subtitle,
-                mi.Integer,
+                mi.Number,
                 'schedulings'
             ))
 
         title = 'Scheduling latencies frequency distributions'
         table_class = mi.TableClass(None, title, column_infos)
-        begin = freq_tables[0].timerange.begin
-        end = freq_tables[0].timerange.end
+        begin = freq_tables[0].timerange.begin.value
+        end = freq_tables[0].timerange.end.value
         result_table = mi.ResultTable(table_class, begin, end)
 
         for row_index, freq0_row in enumerate(freq_tables[0].rows):
@@ -509,14 +507,14 @@ class SchedAnalysisCommand(Command):
             column_infos.append((
                 'prio{}'.format(index),
                 freq_table.subtitle,
-                mi.Integer,
+                mi.Number,
                 'schedulings'
             ))
 
         title = 'Scheduling latencies frequency distributions'
         table_class = mi.TableClass(None, title, column_infos)
-        begin = freq_tables[0].timerange.begin
-        end = freq_tables[0].timerange.end
+        begin = freq_tables[0].timerange.begin.value
+        end = freq_tables[0].timerange.end.value
         result_table = mi.ResultTable(table_class, begin, end)
 
         for row_index, freq0_row in enumerate(freq_tables[0].rows):
@@ -585,7 +583,7 @@ class SchedAnalysisCommand(Command):
             freq_table.append_row(
                 duration_lower=mi.Duration.from_us(lower_bound),
                 duration_upper=mi.Duration.from_us(upper_bound),
-                count=mi.Integer(count),
+                count=mi.Number(count),
             )
 
     def _get_total_freq_result_tables(self, begin_ns, end_ns):
@@ -682,9 +680,6 @@ class SchedAnalysisCommand(Command):
 
         return statistics.stdev(sched_latencies)
 
-    def _ns_to_hour_nsec(self, ts):
-        return common.ns_to_hour_nsec(ts, self._args.multi_day, self._args.gmt)
-
     def _print_sched_events(self, result_table):
         fmt = '[{:<18}, {:<18}] {:>15} {:>10}  {:>3}   {:<25}  {:<25}'
         title_fmt = '{:<20} {:<19} {:>15} {:>10}  {:>3}   {:<25}  {:<25}'
@@ -697,7 +692,7 @@ class SchedAnalysisCommand(Command):
             switch_ts = row.switch_ts.value
             latency = row.latency.value
             prio = row.prio.value
-            target_cpu = row.target_cpu.value
+            target_cpu = row.target_cpu.id
             wakee_proc = row.wakee_proc
             waker_proc = row.waker_proc
 
@@ -707,8 +702,8 @@ class SchedAnalysisCommand(Command):
             else:
                 waker_str = '%s (%d)' % (waker_proc.name, waker_proc.tid)
 
-            print(fmt.format(self._ns_to_hour_nsec(wakeup_ts),
-                             self._ns_to_hour_nsec(switch_ts),
+            print(fmt.format(self._format_timestamp(wakeup_ts),
+                             self._format_timestamp(switch_ts),
                              '%0.03f' % (latency / 1000), prio,
                              target_cpu, wakee_str, waker_str))
 
