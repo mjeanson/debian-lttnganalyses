@@ -31,7 +31,6 @@ from . import termgraph
 from ..core import io
 from ..common import format_utils
 from .command import Command
-from ..linuxautomaton import common
 
 
 _UsageTables = collections.namedtuple('_UsageTables', [
@@ -81,7 +80,7 @@ class IoAnalysisCommand(Command):
             _MI_TABLE_CLASS_SYSCALL_LATENCY_STATS,
             'System call latency statistics', [
                 ('obj', 'System call category', mi.String),
-                ('count', 'Call count', mi.Integer, 'calls'),
+                ('count', 'Call count', mi.Number, 'calls'),
                 ('min_latency', 'Minimum call latency', mi.Duration),
                 ('avg_latency', 'Average call latency', mi.Duration),
                 ('max_latency', 'Maximum call latency', mi.Duration),
@@ -93,7 +92,7 @@ class IoAnalysisCommand(Command):
             _MI_TABLE_CLASS_PART_LATENCY_STATS,
             'Partition latency statistics', [
                 ('obj', 'Partition', mi.Disk),
-                ('count', 'Access count', mi.Integer, 'accesses'),
+                ('count', 'Access count', mi.Number, 'accesses'),
                 ('min_latency', 'Minimum access latency', mi.Duration),
                 ('avg_latency', 'Average access latency', mi.Duration),
                 ('max_latency', 'Maximum access latency', mi.Duration),
@@ -106,7 +105,7 @@ class IoAnalysisCommand(Command):
             'I/O request latency distribution', [
                 ('latency_lower', 'Latency (lower bound)', mi.Duration),
                 ('latency_upper', 'Latency (upper bound)', mi.Duration),
-                ('count', 'Request count', mi.Integer, 'requests'),
+                ('count', 'Request count', mi.Number, 'requests'),
             ]
         ),
         (
@@ -164,14 +163,14 @@ class IoAnalysisCommand(Command):
             _MI_TABLE_CLASS_PER_DISK_TOP_SECTOR,
             'Per-disk top sector I/O operations', [
                 ('disk', 'Disk', mi.Disk),
-                ('count', 'Sector count', mi.Integer, 'sectors'),
+                ('count', 'Sector count', mi.Number, 'sectors'),
             ]
         ),
         (
             _MI_TABLE_CLASS_PER_DISK_TOP_REQUEST,
             'Per-disk top I/O requests', [
                 ('disk', 'Disk', mi.Disk),
-                ('count', 'Request count', mi.Integer, 'I/O requests'),
+                ('count', 'Request count', mi.Number, 'I/O requests'),
             ]
         ),
         (
@@ -269,8 +268,10 @@ class IoAnalysisCommand(Command):
         # Note: we only want to return False only when a request has
         # ended and is completely outside the timerange (i.e. begun
         # after the end of the time range).
-        return not (self._args.begin and self._args.end and end and
-                    begin > self._args.end)
+        return not (
+            self._analysis_conf.begin_ts and self._analysis_conf.end_ts and
+            end and begin > self._analysis_conf.end_ts
+        )
 
     def _filter_io_request(self, io_rq):
         return self._filter_size(io_rq.size) and \
@@ -278,8 +279,12 @@ class IoAnalysisCommand(Command):
             self._filter_time_range(io_rq.begin_ts, io_rq.end_ts)
 
     def _is_io_rq_out_of_range(self, io_rq):
-        return self._args.begin and io_rq.begin_ts < self._args.begin or \
-            self._args.end and io_rq.end_ts > self._args.end
+        return (
+            self._analysis_conf.begin_ts and
+            io_rq.begin_ts < self._analysis_conf.begin_ts or
+            self._analysis_conf.end_ts and
+            io_rq.end_ts > self._analysis_conf.end_ts
+        )
 
     def _append_per_proc_read_usage_row(self, proc_stats, result_table):
         result_table.append_row(
@@ -345,7 +350,7 @@ class IoAnalysisCommand(Command):
 
         result_table.append_row(
             disk=mi.Disk(disk_stats.disk_name),
-            count=mi.Integer(disk_stats.total_rq_sectors),
+            count=mi.Number(disk_stats.total_rq_sectors),
         )
 
         return True
@@ -356,7 +361,7 @@ class IoAnalysisCommand(Command):
 
         result_table.append_row(
             disk=mi.Disk(disk_stats.disk_name),
-            count=mi.Integer(disk_stats.rq_count),
+            count=mi.Number(disk_stats.rq_count),
         )
 
         return True
@@ -668,7 +673,7 @@ class IoAnalysisCommand(Command):
             title='Disk Request Average Latency',
             label_header='Disk',
             unit='ms',
-            get_value=lambda row: row.rtps.value / common.NSEC_PER_MSEC,
+            get_value=lambda row: row.rtps.value / 1000000,
             get_label=lambda row: row.disk.name,
             data=result_table.rows
         )
@@ -751,7 +756,7 @@ class IoAnalysisCommand(Command):
                 latency_lower=mi.Duration.from_us(index * step + min_duration),
                 latency_upper=mi.Duration.from_us((index + 1) * step +
                                                   min_duration),
-                count=mi.Integer(value),
+                count=mi.Number(value),
             )
 
     def _get_disk_freq_result_tables(self, begin, end):
@@ -908,13 +913,12 @@ class IoAnalysisCommand(Command):
 
     def _print_log_row(self, row):
         fmt = '{:<40} {:<16} {:>16} {:>11}  {:<24} {:<8} {:<14}'
-        begin_time = common.ns_to_hour_nsec(row.time_range.begin,
-                                            self._args.multi_day,
-                                            self._args.gmt)
-        end_time = common.ns_to_hour_nsec(row.time_range.end,
-                                          self._args.multi_day,
-                                          self._args.gmt)
-        time_range_str = '[' + begin_time + ',' + end_time + ']'
+        time_range_str = format_utils.format_time_range(
+            row.time_range.begin.value,
+            row.time_range.end.value,
+            self._args.multi_day,
+            self._args.gmt
+        )
         duration_str = '%0.03f' % row.duration.to_us()
 
         if type(row.size) is mi.Empty:
@@ -954,7 +958,7 @@ class IoAnalysisCommand(Command):
         print()
         fmt = '{} {} (usec)'
         print(fmt.format(result_table.title, result_table.subtitle))
-        header_fmt = '{:<19} {:<20} {:<16} {:<23} {:<5} {:<24} {:<8} {:<14}'
+        header_fmt = '{:<20} {:<20} {:<16} {:<23} {:<5} {:<24} {:<8} {:<14}'
         print(header_fmt.format(
             'Begin', 'End', 'Name', 'Duration (usec)', 'Size', 'Proc', 'PID',
             'Filename'))
@@ -1004,7 +1008,7 @@ class IoAnalysisCommand(Command):
 
         result_table.append_row(
             obj=obj,
-            count=mi.Integer(rq_count),
+            count=mi.Number(rq_count),
             min_latency=mi.Duration(min_duration),
             avg_latency=mi.Duration(avg),
             max_latency=mi.Duration(max_duration),
