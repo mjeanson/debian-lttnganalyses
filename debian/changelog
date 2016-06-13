@@ -1,3 +1,9 @@
+lttnganalyses (0.5.3-1) unstable; urgency=medium
+
+  * [9004543] New upstream version 0.5.3
+
+ -- Michael Jeanson <mjeanson@ubuntu.com>  Mon, 13 Jun 2016 13:25:20 -0400
+
 lttnganalyses (0.5.2-1) unstable; urgency=medium
 
   * [1f07a08] New upstream version 0.5.2
