@@ -16,6 +16,8 @@ This README describes the implemented analyses as well as how to use them.
 
 |pypi|
 
+|travis|
+
 .. contents::
     :local:
     :depth: 2
@@ -123,6 +125,19 @@ The only difference with the above commands is the tracing session's creation:
 .. code-block:: bash
 
     lttng create -U net://<remote-host>
+
+
+=====
+Usage
+=====
+
+Each analysis has it's own script named in the form of *lttng-analysisname*.
+
+The LTTNG_ANALYSES_DEBUG environment variable can be used to enable debug output:
+
+.. code-block:: bash
+
+    LTTNG_ANALYSES_DEBUG=1 lttng-cputop <path/to/trace>
 
 
 ====================
@@ -595,3 +610,7 @@ progress; feedback, bug reports and improvement ideas are always welcome!
 .. |pypi| image:: https://img.shields.io/pypi/v/lttnganalyses.svg?style=flat-square&label=latest%20version
     :target: https://pypi.python.org/pypi/lttnganalyses
     :alt: Latest version released on PyPi
+
+.. |travis| image:: https://travis-ci.org/lttng/lttng-analyses.svg?branch=master
+    :target: https://travis-ci.org/lttng/lttng-analyses
+    :alt: Status of Travis CI
