@@ -1,6 +1,6 @@
 Metadata-Version: 1.1
 Name: lttnganalyses
-Version: 0.5.2
+Version: 0.5.3
 Summary: LTTng analyses
 Home-page: https://github.com/lttng/lttng-analyses
 Author: Julien Desfossez
@@ -23,6 +23,8 @@ Description: **************
         This README describes the implemented analyses as well as how to use them.
         
         |pypi|
+        
+        |travis|
         
         .. contents::
             :local:
@@ -131,6 +133,19 @@ Description: **************
         .. code-block:: bash
         
             lttng create -U net://<remote-host>
+        
+        
+        =====
+        Usage
+        =====
+        
+        Each analysis has it's own script named in the form of *lttng-analysisname*.
+        
+        The LTTNG_ANALYSES_DEBUG environment variable can be used to enable debug output:
+        
+        .. code-block:: bash
+        
+            LTTNG_ANALYSES_DEBUG=1 lttng-cputop <path/to/trace>
         
         
         ====================
@@ -603,6 +618,10 @@ Description: **************
         .. |pypi| image:: https://img.shields.io/pypi/v/lttnganalyses.svg?style=flat-square&label=latest%20version
             :target: https://pypi.python.org/pypi/lttnganalyses
             :alt: Latest version released on PyPi
+        
+        .. |travis| image:: https://travis-ci.org/lttng/lttng-analyses.svg?branch=master
+            :target: https://travis-ci.org/lttng/lttng-analyses
+            :alt: Status of Travis CI
         
 Keywords: lttng tracing
 Platform: UNKNOWN
