@@ -1,3 +1,9 @@
+lttnganalyses (0.5.4-1~trusty1) trusty; urgency=medium
+
+  * Source backport to trusty.
+
+ -- Michael Jeanson <mjeanson@ubuntu.com>  Thu, 04 Aug 2016 18:18:47 -0400
+
 lttnganalyses (0.5.4-1) unstable; urgency=medium
 
   * [95d8e85] New upstream version 0.5.4
